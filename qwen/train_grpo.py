@@ -7,10 +7,47 @@ from peft import LoraConfig
 from trl import GRPOConfig, GRPOTrainer
 import os
 import logging
+import wandb
+import weave
+
+from lighteval.logging.evaluation_tracker import EvaluationTracker
+from lighteval.models.transformers.transformers_model import TransformersModel, TransformersModelConfig
+from lighteval.pipeline import ParallelismManager, Pipeline, PipelineParameters
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# ============================================================================
+# Validate environment variables
+# ============================================================================
+
+MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-1.5B-Instruct")
+if not MODEL_NAME:
+    raise ValueError("MODEL_NAME environment variable is not set.")
+
+OUTPUT_DIR = os.getenv("OUTPUT_DIR", "outputs/LoRA-GRPO")
+if not OUTPUT_DIR:
+    raise ValueError("OUTPUT_DIR environment variable is not set.")
+
+RUN_NAME = os.getenv("RUN_NAME", "LoRA-GRPO-gsm8k")
+if not RUN_NAME:
+    raise ValueError("RUN_NAME environment variable is not set.")
+
+EVAL_OUTPUT_DIR = os.getenv("EVAL_OUTPUT_DIR", f"{OUTPUT_DIR}/evaluation_results")
+
+BENCHMARKS = os.getenv("BENCHMARKS", "lighteval|gsm8k|0")
+if not BENCHMARKS:
+    raise ValueError("BENCHMARKS environment variable is not set.")
+
+MAX_EVAL_SAMPLES = int(os.getenv("MAX_EVAL_SAMPLES", "100"))  # Limit for faster evaluation
+if MAX_EVAL_SAMPLES <= 0:
+    raise ValueError("MAX_EVAL_SAMPLES must be a positive integer.")
+
+
+# ============================================================================
+# Reward function and dataset configuration
+# ============================================================================
 
 # Load and prep dataset
 SYSTEM_PROMPT = """
@@ -48,18 +85,7 @@ def extract_hash_answer(text: str) -> str | None:
         return None
     return text.split("####")[1].strip()
 
-# Validate environment variables
-MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-1.5B-Instruct")
-if not MODEL_NAME:
-    raise ValueError("MODEL_NAME environment variable is not set.")
 
-OUTPUT_DIR = os.getenv("OUTPUT_DIR", "outputs/LoRA-GRPO")
-if not OUTPUT_DIR:
-    raise ValueError("OUTPUT_DIR environment variable is not set.")
-
-RUN_NAME = os.getenv("RUN_NAME", "LoRA-GRPO-gsm8k")
-if not RUN_NAME:
-    raise ValueError("RUN_NAME environment variable is not set.")
 
 # Configurable one-shot prompting
 def get_gsm8k_questions(split="train", use_one_shot=False) -> Dataset:
@@ -129,7 +155,9 @@ def count_xml(text) -> float:
         count -= (len(text.split("\n</answer>")[-1]) - 1) * 0.001
     return count
 
-# Model setup
+# ============================================================================
+# Model and training configuation
+# ============================================================================
 try:
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_NAME,
@@ -171,8 +199,9 @@ training_args = GRPOConfig(
     num_generations=16,  # Reduced from 16
     max_prompt_length=256,
     max_completion_length=786,
-    num_train_epochs=1,
-    save_steps=100,
+    #num_train_epochs=1, # comment out or overriden by setting max_steps 
+    max_steps=2,  # Set max_steps for quicker testing
+    save_steps=1, # changed for testing
     max_grad_norm=0.1,
     report_to="wandb",
     log_on_each_node=False,
@@ -194,10 +223,49 @@ trainer = GRPOTrainer(
     peft_config=peft_config  # Uncomment if PEFT is working for you
 )
 
-# Train the model
+# ============================================================================
+# Training model 
+# ============================================================================
+
 try:
     trainer.train()
 except Exception as e:
     logger.error(f"Training failed: {e}")
     raise
 
+# Evaluation after training
+logger.info("Starting evaluation...")
+
+# Merge LoRA weights back into base model for evaluation
+logger.info("Merging LoRA weights into base model...")
+merged_model = trainer.model.merge_and_unload()
+
+evaluation_tracker = EvaluationTracker(output_dir="./results")
+pipeline_params = PipelineParameters(
+    launcher_type=ParallelismManager.NONE,
+    max_samples=100
+)
+
+config = TransformersModelConfig(model_name=MODEL_NAME, batch_size=1)
+lighteval_model = TransformersModel.from_model(merged_model, config)
+
+pipeline = Pipeline(
+    model=lighteval_model,
+    pipeline_parameters=pipeline_params,
+    evaluation_tracker=evaluation_tracker,
+    tasks="lighteval|gsm8k|0|0",  # -> suite|task|few_shot|truncate_few_shots
+)
+
+results = pipeline.evaluate()
+pipeline.show_results()
+detailed_results = pipeline.get_results()
+
+# Log evaluation results to wandb
+import wandb
+if wandb.run is not None:
+    for task_name, task_results in detailed_results.items():
+        if isinstance(task_results, dict):
+            for metric_name, metric_value in task_results.items():
+                if isinstance(metric_value, (int, float)):
+                    wandb.log({f"eval/{task_name}/{metric_name}": metric_value})
+    logger.info("Evaluation results logged to wandb")

@@ -7,13 +7,14 @@ import peft
 import trl
 import datasets
 import wandb    
+import lighteval
 
 print("transformers.__version__:", transformers.__version__)
 print("peft.__version__", peft.__version__)
 print("trl.__version__:", trl.__version__)
 print("datasets.__version__:", datasets.__version__)
 print("wandb.__version__:", wandb.__version__)
-
+print("lighteval.__version__:", lighteval.__version__)
 
 
 def basic_calculation(a: int, b: int) -> torch.Tensor:
