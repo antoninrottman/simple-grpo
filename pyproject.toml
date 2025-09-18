@@ -16,6 +16,7 @@ dependencies = [
   "accelerate>=1.10.1",
   "lighteval>=0.10.0",
   "weave>=0.52.8",
+  "dotenv>=0.9.9",
 ]
 
 

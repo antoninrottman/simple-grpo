@@ -1,6 +1,7 @@
 # train_grpo.py
 import re
 import torch
+import gc
 from datasets import load_dataset, Dataset
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from peft import LoraConfig
@@ -13,6 +14,10 @@ import weave
 from lighteval.logging.evaluation_tracker import EvaluationTracker
 from lighteval.models.transformers.transformers_model import TransformersModel, TransformersModelConfig
 from lighteval.pipeline import ParallelismManager, Pipeline, PipelineParameters
+
+# Load HF token from .env file 
+from dotenv import load_dotenv
+load_dotenv()
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -35,14 +40,6 @@ if not RUN_NAME:
     raise ValueError("RUN_NAME environment variable is not set.")
 
 EVAL_OUTPUT_DIR = os.getenv("EVAL_OUTPUT_DIR", f"{OUTPUT_DIR}/evaluation_results")
-
-BENCHMARKS = os.getenv("BENCHMARKS", "lighteval|gsm8k|0")
-if not BENCHMARKS:
-    raise ValueError("BENCHMARKS environment variable is not set.")
-
-MAX_EVAL_SAMPLES = int(os.getenv("MAX_EVAL_SAMPLES", "100"))  # Limit for faster evaluation
-if MAX_EVAL_SAMPLES <= 0:
-    raise ValueError("MAX_EVAL_SAMPLES must be a positive integer.")
 
 
 # ============================================================================
@@ -200,9 +197,9 @@ training_args = GRPOConfig(
     max_prompt_length=256,
     max_completion_length=786,
     #num_train_epochs=1, # comment out or overriden by setting max_steps 
-    max_steps=2,  # Set max_steps for quicker testing
+    max_steps=1,  # Set max_steps for quicker testing
     save_steps=1, # changed for testing
-    max_grad_norm=0.1,
+    max_grad_norm=1.0,
     report_to="wandb",
     log_on_each_node=False,
     beta=0.0,
@@ -233,32 +230,46 @@ except Exception as e:
     logger.error(f"Training failed: {e}")
     raise
 
+# ====================================================================
 # Evaluation after training
+# ====================================================================
 logger.info("Starting evaluation...")
 
 # Merge LoRA weights back into base model for evaluation
 logger.info("Merging LoRA weights into base model...")
 merged_model = trainer.model.merge_and_unload()
 
+trainer.accelerator.free_memory()   # releases gradient shards/optim state
+del trainer.model, trainer.optimizer, trainer.lr_scheduler
+gc.collect()
+torch.cuda.empty_cache()
+
 evaluation_tracker = EvaluationTracker(output_dir="./results")
+
 pipeline_params = PipelineParameters(
     launcher_type=ParallelismManager.NONE,
-    max_samples=100
+    use_chat_template=True
 )
 
-config = TransformersModelConfig(model_name=MODEL_NAME, batch_size=1)
+config = TransformersModelConfig(model_name=MODEL_NAME, batch_size=1,generation_parameters={"max_new_tokens":512}, max_length=512)
+
 lighteval_model = TransformersModel.from_model(merged_model, config)
+
+# Run the exact tasks you listed
+tasks = "lighteval|math_500|0|0,lighteval|gpqa:diamond|0|0"
+
 
 pipeline = Pipeline(
     model=lighteval_model,
     pipeline_parameters=pipeline_params,
     evaluation_tracker=evaluation_tracker,
-    tasks="lighteval|gsm8k|0|0",  # -> suite|task|few_shot|truncate_few_shots
+    tasks=tasks,  # list of well-formed task strings
 )
 
 results = pipeline.evaluate()
 pipeline.show_results()
 detailed_results = pipeline.get_results()
+
 
 # Log evaluation results to wandb
 import wandb

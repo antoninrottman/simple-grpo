@@ -9,8 +9,9 @@ wheels/
 # Ignore training outputs
 outputs/
 wandb/
-_scheduler-stdout.txt
-_scheduler-stderr.txt
+*stdout.txt
+*stderr.txt
 
 # Virtual environments
 .venv
+.env
