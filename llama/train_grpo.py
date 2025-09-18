@@ -15,6 +15,10 @@ from lighteval.logging.evaluation_tracker import EvaluationTracker
 from lighteval.models.transformers.transformers_model import TransformersModel, TransformersModelConfig
 from lighteval.pipeline import ParallelismManager, Pipeline, PipelineParameters
 
+# Load HF token from .env file 
+from dotenv import load_dotenv
+load_dotenv()
+
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -59,7 +63,7 @@ tokenizer.pad_token = tokenizer.eos_token
 # PEFT config (optional)
 peft_config = LoraConfig(
     r=16,
-    lora_alpha=64,
+    lora_alpha=16,
     target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "up_proj", "down_proj", "gate_proj"],
     # task_type="CAUSAL_LM",
     lora_dropout=0.05,
@@ -232,7 +236,7 @@ max(dataset.map(
 training_args = GRPOConfig(
     output_dir=OUTPUT_DIR,
     run_name=RUN_NAME,
-    learning_rate=5e-6,
+    learning_rate=1e-5,
     adam_beta1=0.9,
     adam_beta2=0.99,
     weight_decay=0.1,
@@ -241,14 +245,14 @@ training_args = GRPOConfig(
     logging_steps=1,
     bf16=False,
     fp16=True,
-    per_device_train_batch_size=8,  
-    gradient_accumulation_steps=4,
+    per_device_train_batch_size=4,  
+    gradient_accumulation_steps=8,
     num_generations=16,  # Reduced from 16
     max_prompt_length=256,
     max_completion_length=786,
     #num_train_epochs=1, # comment out or overriden by setting max_steps 
-    max_steps=2,  # Set max_steps for quicker testing
-    save_steps=1, # changed for testing
+    max_steps=500,  # Set max_steps for quicker testing
+    save_steps=100, # changed for testing
     max_grad_norm=1.0,
     report_to="wandb",
     log_on_each_node=False,
