@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --no-requeue
-#SBATCH --job-name=500_qwen
-#SBATCH --output=_500_qwen-stdout.txt
-#SBATCH --error=_500_qwen-stderr.txt
+#SBATCH --job-name=eval_500_qwen_eval
+#SBATCH --output=_eval_500_qwen-stdout.txt
+#SBATCH --error=_eval_500_qwen-stderr.txt
 #SBATCH --partition=gpu
 #SBATCH --qos=normal
 #SBATCH --nodes=1
@@ -19,12 +19,29 @@ source /home/rottman/simple-grpo/.venv/bin/activate
 export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True,max_split_size_mb:128"
 
 export MODEL_NAME="Qwen/Qwen2.5-1.5B-Instruct"
-export OUTPUT_DIR="./outputs/500_qwen_gsm8k"
-export RUN_NAME="500_qwen_gsm8k"
+export OUTPUT_DIR="./outputs/eval_500_qwen_gsm8k"
+export RUN_NAME="eval_500_qwen_gsm8k"
 export EVAL_OUTPUT_DIR="${OUTPUT_DIR}/evaluation_results"
+export MERGED_DIR="${OUTPUT_DIR}/merged_model"
+export EVAL="CLI" # API or CLI or NONE
+
+mkdir -p $EVAL_OUTPUT_DIR
+mkdir -p $MERGED_DIR
 
 # for multi-gpu training (not recommended with LoRA+GRPO)
 #accelerate launch --num_processes=2 train_grpo.py
 
 # single GPU training
 python train_grpo.py
+
+if [[ "${EVAL:-}" == "CLI" ]]; then
+    echo "Running evaluation with CLI"
+    bash ../bin/run_eval.sh "$MERGED_DIR" "$EVAL_OUTPUT_DIR"
+    exit 0
+fi
+
+
+
+
+
+

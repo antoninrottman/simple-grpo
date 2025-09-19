@@ -749,8 +749,8 @@ wheels = [
 
 [[package]]
 name = "lighteval"
-version = "0.10.0"
-source = { registry = "https://pypi.org/simple" }
+version = "0.9.1.dev0"
+source = { git = "https://github.com/huggingface/lighteval.git?rev=d3da6b9bbf38104c8b5e1acc86f83541f9a502d1#d3da6b9bbf38104c8b5e1acc86f83541f9a502d1" }
 dependencies = [
     { name = "accelerate" },
     { name = "aenum" },
@@ -760,12 +760,10 @@ dependencies = [
     { name = "gitpython" },
     { name = "httpx" },
     { name = "huggingface-hub", extra = ["hf-xet"] },
-    { name = "latex2sympy2-extended" },
     { name = "nltk" },
     { name = "numpy" },
     { name = "protobuf" },
     { name = "pycountry" },
-    { name = "pydantic" },
     { name = "pytablewriter" },
     { name = "rich" },
     { name = "rouge-score" },
@@ -780,9 +778,10 @@ dependencies = [
     { name = "transformers" },
     { name = "typer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e9/2c/8232d77ba5c22342a21ed313556a8cc998e63c5ff10b2f87947527822d8b/lighteval-0.10.0.tar.gz", hash = "sha256:e1acb1592a19bf1f8f660ed225c387dd340bbdd002e62c1f5c80a94aa341d2fd", size = 341451 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/7c/8e/d48315622c38086b94d8274edc5c3630be03befcce36a5ef318e0d278f0b/lighteval-0.10.0-py3-none-any.whl", hash = "sha256:3053df6600f93e34cc59aca6a959cf38855677f142c0a16c88cc3ef1280f6cba", size = 433019 },
+
+[package.optional-dependencies]
+math = [
+    { name = "latex2sympy2-extended" },
 ]
 
 [[package]]
@@ -1918,7 +1917,7 @@ dependencies = [
     { name = "accelerate" },
     { name = "datasets" },
     { name = "dotenv" },
-    { name = "lighteval" },
+    { name = "lighteval", extra = ["math"] },
     { name = "peft" },
     { name = "torch", version = "2.7.1", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-11-simple-grpo-cpu') or (extra == 'extra-11-simple-grpo-cpu' and extra == 'extra-11-simple-grpo-cu118')" },
     { name = "torch", version = "2.7.1", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-11-simple-grpo-cpu' and extra == 'extra-11-simple-grpo-cu118') or (extra != 'extra-11-simple-grpo-cpu' and extra != 'extra-11-simple-grpo-cu118')" },
@@ -1958,7 +1957,7 @@ requires-dist = [
     { name = "accelerate", specifier = ">=1.10.1" },
     { name = "datasets", specifier = ">=2.10.1" },
     { name = "dotenv", specifier = ">=0.9.9" },
-    { name = "lighteval", specifier = ">=0.10.0" },
+    { name = "lighteval", extras = ["math"], git = "https://github.com/huggingface/lighteval.git?rev=d3da6b9bbf38104c8b5e1acc86f83541f9a502d1" },
     { name = "peft", specifier = ">=0.3.0" },
     { name = "torch", specifier = "==2.7.1" },
     { name = "torch", marker = "extra == 'cpu'", specifier = "==2.7.1", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "simple-grpo", extra = "cpu" } },

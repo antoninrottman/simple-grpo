@@ -14,11 +14,10 @@ dependencies = [
   "datasets>=2.10.1",
   "wandb",
   "accelerate>=1.10.1",
-  "lighteval>=0.10.0",
   "weave>=0.52.8",
   "dotenv>=0.9.9",
+  "lighteval[math]",
 ]
-
 
 # Specific versions of torch, torchvision, and torchaudio are installed based on the extra feature
 [project.optional-dependencies]
@@ -47,6 +46,7 @@ torchaudio = [
   { index = "pytorch-cpu", extra = "cpu" },
   { index = "pytorch-cu118", extra = "cu118" },
 ]
+lighteval = { git = "https://github.com/huggingface/lighteval.git", rev = "d3da6b9bbf38104c8b5e1acc86f83541f9a502d1" }
 
 
 [[tool.uv.index]]

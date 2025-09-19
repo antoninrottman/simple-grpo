@@ -41,6 +41,7 @@ if not RUN_NAME:
 
 EVAL_OUTPUT_DIR = os.getenv("EVAL_OUTPUT_DIR", f"{OUTPUT_DIR}/evaluation_results")
 
+EVAL = os.getenv("EVAL")
 
 # ============================================================================
 # Reward function and dataset configuration
@@ -182,7 +183,7 @@ peft_config = LoraConfig(
 training_args = GRPOConfig(
     output_dir=OUTPUT_DIR,
     run_name=RUN_NAME,
-    learning_rate=1e-5,
+    learning_rate=1e-10,
     adam_beta1=0.9,
     adam_beta2=0.99,
     weight_decay=0.1,
@@ -197,12 +198,16 @@ training_args = GRPOConfig(
     max_prompt_length=256,
     max_completion_length=786,
     #num_train_epochs=1, # comment out or overriden by setting max_steps 
-    max_steps=500,  # Set max_steps for quicker testing
-    save_steps=100, # changed for testing
+    max_steps=1,  # Set max_steps for quicker testing
+    save_steps=1, # changed for testing
     max_grad_norm=1.0,
     report_to="wandb",
     log_on_each_node=False,
     beta=0.0,
+    temperature=0.6,
+    top_p=0.85,
+    top_k=20,
+    repetition_penalty=1.05,
 )
 
 # Trainer setup
@@ -239,44 +244,52 @@ logger.info("Starting evaluation...")
 logger.info("Merging LoRA weights into base model...")
 merged_model = trainer.model.merge_and_unload()
 
-trainer.accelerator.free_memory()   # releases gradient shards/optim state
-del trainer.model, trainer.optimizer, trainer.lr_scheduler
-gc.collect()
-torch.cuda.empty_cache()
+# ======================================================
+# Save merged model to launch from cli
+# =====================================================
+if EVAL == "CLI":
+    logger.info(f"Saving merged model to {OUTPUT_DIR}/merged_model")
+    merged_model.save_pretrained(f"{OUTPUT_DIR}/merged_model")
+    tokenizer.save_pretrained(f"{OUTPUT_DIR}/merged_model")
 
-evaluation_tracker = EvaluationTracker(output_dir="./results")
+elif EVAL == "API":
 
-pipeline_params = PipelineParameters(
-    launcher_type=ParallelismManager.NONE,
-    use_chat_template=True
-)
+    # ======================================================
+    # Launch evaluation from api 
+    # =====================================================
+    print("Launching evaluation from API...")
 
-config = TransformersModelConfig(model_name=MODEL_NAME, batch_size=1,generation_parameters={"max_new_tokens":512}, max_length=512)
+    tasks = ["lighteval|math_500|0|0","lighteval|gpqa:diamond|0|0"]
+    for task in tasks:
+        logger.info(f"Evaluating task: {task}")
+        trainer.accelerator.free_memory()   # releases gradient shards/optim state
+        del trainer.model, trainer.optimizer, trainer.lr_scheduler
+        gc.collect()
+        torch.cuda.empty_cache()
 
-lighteval_model = TransformersModel.from_model(merged_model, config)
+        evaluation_tracker = EvaluationTracker(output_dir="./evaluation_resultsls")
 
-# Run the exact tasks you listed
-tasks = "lighteval|math_500|0|0,lighteval|gpqa:diamond|0|0"
+        pipeline_params = PipelineParameters(
+            launcher_type=ParallelismManager.NONE,
+            use_chat_template=True
+        )
 
+        config = TransformersModelConfig(model_name=MODEL_NAME, batch_size=1,generation_parameters={"max_new_tokens":512}, max_length=512)
 
-pipeline = Pipeline(
-    model=lighteval_model,
-    pipeline_parameters=pipeline_params,
-    evaluation_tracker=evaluation_tracker,
-    tasks=tasks,  # list of well-formed task strings
-)
-
-results = pipeline.evaluate()
-pipeline.show_results()
-detailed_results = pipeline.get_results()
+        lighteval_model = TransformersModel.from_model(merged_model, config)
 
 
-# Log evaluation results to wandb
-import wandb
-if wandb.run is not None:
-    for task_name, task_results in detailed_results.items():
-        if isinstance(task_results, dict):
-            for metric_name, metric_value in task_results.items():
-                if isinstance(metric_value, (int, float)):
-                    wandb.log({f"eval/{task_name}/{metric_name}": metric_value})
-    logger.info("Evaluation results logged to wandb")
+        pipeline = Pipeline(
+            model=lighteval_model,
+            pipeline_parameters=pipeline_params,
+            evaluation_tracker=evaluation_tracker,
+            tasks=task,  
+        )
+
+        results = pipeline.evaluate()
+        pipeline.show_results()
+        detailed_results = pipeline.get_results()
+
+else:
+    print("EVAL variable not set correctly, skipping evaluation.")
+    
