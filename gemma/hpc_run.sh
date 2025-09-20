@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --no-requeue
-#SBATCH --job-name=200_test_gemma
-#SBATCH --output=_200_test_gemma-stdout.txt
-#SBATCH --error=_200_test_gemma-stderr.txt
+#SBATCH --job-name=run1_no_klgemma
+#SBATCH --output=_run1_no_kl_gemma-stdout.txt
+#SBATCH --error=_run1_no_kl_gemma-stderr.txt
 #SBATCH --partition=gpu
 #SBATCH --qos=normal
 #SBATCH --nodes=1
@@ -19,11 +19,11 @@ source /home/rottman/simple-grpo/.venv/bin/activate
 export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True,max_split_size_mb:128"
 
 export MODEL_NAME="google/gemma-3-1b-it"
-export OUTPUT_DIR="./outputs/200_test_gemma_gsm8k"
-export RUN_NAME="200_test_gemma_gsm8k"
+export OUTPUT_DIR="./outputs/run1_no_kl_gemma_gsm8k"
+export RUN_NAME="run1_no_kl_gemma_gsm8k"
 export EVAL_OUTPUT_DIR="${OUTPUT_DIR}/evaluation_results"
 export MERGED_DIR="${OUTPUT_DIR}/merged_model"
-export EVAL="None" # API or CLI or NONE
+export EVAL="CLI" # API or CLI or NONE
 
 mkdir -p $EVAL_OUTPUT_DIR
 mkdir -p $MERGED_DIR
