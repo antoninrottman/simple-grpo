@@ -3,13 +3,12 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: submit_grpo_run.sh --model MODEL --beta VALUE --lora-r VALUE --lora-alpha VALUE [options]
+Usage: submit_grpo_run.sh --model MODEL --beta VALUE --lora-r VALUE [options]
 
 Required arguments:
   --model MODEL            One of: gemma, llama, qwen
   --beta VALUE             GRPO beta value (e.g. 0 or 0.05)
   --lora-r VALUE           LoRA rank (integer)
-  --lora-alpha VALUE       LoRA alpha (integer)
 
 Optional arguments:
   --sweep-name NAME        Top-level results directory name (default: results_run_<timestamp>)
@@ -32,7 +31,6 @@ DEFAULT_RESULTS_ROOT="$REPO_ROOT"
 MODEL=""
 BETA=""
 LORA_R=""
-LORA_ALPHA=""
 SWEEP_NAME=""
 RUN_NAME=""
 JOB_NAME=""
@@ -50,8 +48,6 @@ while [[ $# -gt 0 ]]; do
       BETA=$2; shift 2 ;;
     --lora-r)
       LORA_R=$2; shift 2 ;;
-    --lora-alpha)
-      LORA_ALPHA=$2; shift 2 ;;
     --sweep-name)
       SWEEP_NAME=$2; shift 2 ;;
     --run-name)
@@ -79,7 +75,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z $MODEL || -z $BETA || -z $LORA_R || -z $LORA_ALPHA ]]; then
+if [[ -z $MODEL || -z $BETA || -z $LORA_R ]]; then
   echo "Missing required argument" >&2
   usage
   exit 1
@@ -105,12 +101,12 @@ fi
 
 if [[ -z $RUN_NAME ]]; then
   beta_tag=$(sanitize "$BETA")
-  RUN_NAME="grpo_${MODEL}_b${beta_tag}_r${LORA_R}_a${LORA_ALPHA}"
+  RUN_NAME="grpo_${MODEL}_b${beta_tag}_r${LORA_R}"
 fi
 
 if [[ -z $JOB_NAME ]]; then
   beta_tag=$(sanitize "$BETA")
-  JOB_NAME="grpo-${MODEL}-b${beta_tag}-r${LORA_R}-a${LORA_ALPHA}"
+  JOB_NAME="grpo-${MODEL}-b${beta_tag}-r${LORA_R}"
 fi
 
 mkdir -p "$RESULTS_ROOT/$SWEEP_NAME"
@@ -123,7 +119,6 @@ EXPORT_VARS=(
   "SWEEP_NAME=$SWEEP_NAME"
   "GRPO_BETA=$BETA"
   "LORA_R=$LORA_R"
-  "LORA_ALPHA=$LORA_ALPHA"
   "SCRATCH_ROOT=$SCRATCH_ROOT"
   "HOME_REPO=$REPO_ROOT"
   "RESULTS_ROOT=$RESULTS_ROOT"
@@ -133,6 +128,9 @@ EXPORT_VARS=(
 if [[ -n $HF_MODEL ]]; then
   EXPORT_VARS+=("HF_MODEL_NAME=$HF_MODEL")
 fi
+
+LORA_ALPHA=$LORA_R
+EXPORT_VARS+=("LORA_ALPHA=$LORA_ALPHA")
 
 OLD_IFS=$IFS
 IFS=,
@@ -147,8 +145,8 @@ CMD=(sbatch
   --export="$EXPORT_ARG"
   "$REPO_ROOT/bin/grpo_train_job.sh")
 
-printf '[submit_grpo_run] sweep=%s model=%s beta=%s lora_r=%s lora_alpha=%s run=%s
-'   "$SWEEP_NAME" "$MODEL" "$BETA" "$LORA_R" "$LORA_ALPHA" "$RUN_NAME"
+printf '[submit_grpo_run] sweep=%s model=%s beta=%s lora_r=%s run=%s
+'   "$SWEEP_NAME" "$MODEL" "$BETA" "$LORA_R" "$RUN_NAME"
 
 if [[ $DRY_RUN -eq 1 ]]; then
   printf '[submit_grpo_run] dry run: %q ' "${CMD[@]}"

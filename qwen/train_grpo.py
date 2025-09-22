@@ -245,9 +245,11 @@ tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 tokenizer.pad_token = tokenizer.eos_token
 
 # PEFT config (optional)
+LORA_R = _get_env_int("LORA_R", 16)
+
 peft_config = LoraConfig(
-    r=_get_env_int("LORA_R", 16),
-    lora_alpha=_get_env_int("LORA_ALPHA", 16),
+    r=LORA_R,
+    lora_alpha=LORA_R,
     target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "up_proj", "down_proj", "gate_proj"],
     # task_type="CAUSAL_LM",
     lora_dropout=0.05,
