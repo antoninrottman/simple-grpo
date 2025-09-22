@@ -23,6 +23,24 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+def _get_env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise ValueError(f"Invalid float for {name}: {raw}") from exc
+
+def _get_env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise ValueError(f"Invalid int for {name}: {raw}") from exc
+
 # ============================================================================
 # Validate environment variables
 # ============================================================================
@@ -41,7 +59,7 @@ if not RUN_NAME:
 
 EVAL_OUTPUT_DIR = os.getenv("EVAL_OUTPUT_DIR", f"{OUTPUT_DIR}/evaluation_results")
 
-EVAL = os.getenv("EVAL")
+EVAL = os.getenv("EVAL", "NONE")
 
 # ============================================================================
 # Reward function and dataset configuration
@@ -84,6 +102,26 @@ def extract_hash_answer(text: str) -> str | None:
     return text.split("####")[1].strip()
 
 
+def _to_number(candidate: str | None) -> float | None:
+    """Lenient numeric parsing used by rewards to reduce sparsity."""
+    if candidate is None:
+        return None
+    s = candidate.strip().replace(",", "")
+    if not s:
+        return None
+    # Simple fraction support like 3/4
+    if "/" in s:
+        a, b = s.split("/", 1)
+        try:
+            return float(a) / float(b)
+        except Exception:
+            pass
+    try:
+        return float(s)
+    except Exception:
+        return None
+
+
 
 # Configurable one-shot prompting
 def get_gsm8k_questions(split="train", use_one_shot=False) -> Dataset:
@@ -113,25 +151,61 @@ dataset = get_gsm8k_questions(use_one_shot=True)
 
 # Reward functions
 def correctness_reward_func(prompts, completions, answer, **kwargs) -> list[float]:
-    """Calculates reward based on correctness of the response."""
-    responses = [completion[0]['content'] for completion in completions]
-    q = prompts[0][-1]['content']
-    extracted_responses = [extract_xml_answer(r) for r in responses]
-    logger.info(f"Question:\n{q}\nAnswer:\n{answer[0]}\nResponse:\n{responses[0]}\nExtracted:\n{extracted_responses[0]}")
-    return [2.0 if r == a else 0.0 for r, a in zip(extracted_responses, answer)]
+    """Reward exact matches, with smooth fallback on numeric closeness.
+
+    Keeps the name and intent of the existing reward while reducing sparsity
+    for cases where the predicted number is near the gold answer.
+    """
+    golds = answer if isinstance(answer, list) else [answer] * len(completions)
+    preds = [extract_xml_answer(c[0]['content']) for c in completions]
+
+    rewards: list[float] = []
+    for pred, gold in zip(preds, golds):
+        # Exact string match first
+        if pred.strip() == (gold or "").strip():
+            rewards.append(2.0)
+            continue
+        # Numeric partial credit
+        p = _to_number(pred)
+        g = _to_number(gold)
+        if p is None or g is None:
+            rewards.append(0.0)
+            continue
+        rel_err = abs(p - g) / max(1.0, abs(g))
+        # full credit at 0 err -> 2.0; 0 at >= 50% rel error
+        shaped = max(0.0, 1.0 - (rel_err / 0.5)) * 2.0
+        rewards.append(shaped)
+    return rewards
 
 def int_reward_func(completions, **kwargs) -> list[float]:
-    """Calculates reward if the extracted response is a digit."""
+    """Reward if the extracted response parses as a number (lenient)."""
     responses = [completion[0]['content'] for completion in completions]
     extracted_responses = [extract_xml_answer(r) for r in responses]
-    return [0.5 if r.isdigit() else 0.0 for r in extracted_responses]
+    scores = []
+    for r in extracted_responses:
+        val = _to_number(r)
+        scores.append(0.5 if val is not None else 0.0)
+    return scores
 
 def format_reward_func(completions, strict=False, **kwargs) -> list[float]:
-    """Calculates reward based on XML formatting."""
-    pattern = r"^<reasoning>\n.*?\n</reasoning>\n<answer>\n.*?\n</answer>\n$" if strict else r"<reasoning>.*?</reasoning>\s*<answer>.*?</answer>"
+    """Reward well-formed outputs with partial credit when both sections exist.
+
+    - 0.5 if matches the canonical strict multi-line block
+    - 0.25 if both <reasoning>…</reasoning> and <answer>…</answer> are present (any spacing)
+    - 0.0 otherwise
+    """
+    strict_pattern = r"^<reasoning>\n.*?\n</reasoning>\n<answer>\n.*?\n</answer>\n$"
+    loose_has_both = r"<reasoning>.*?</reasoning>.*?<answer>.*?</answer>"
     responses = [completion[0]["content"] for completion in completions]
-    matches = [re.match(pattern, r) for r in responses]
-    return [0.5 if match else 0.0 for match in matches]
+    scores = []
+    for r in responses:
+        if re.match(strict_pattern, r, flags=re.DOTALL):
+            scores.append(0.5)
+        elif re.search(loose_has_both, r, flags=re.DOTALL):
+            scores.append(0.25)
+        else:
+            scores.append(0.0)
+    return scores
 
 def xmlcount_reward_func(completions, **kwargs) -> list[float]:
     """Calculates reward based on XML tag counts."""
@@ -172,8 +246,8 @@ tokenizer.pad_token = tokenizer.eos_token
 
 # PEFT config (optional)
 peft_config = LoraConfig(
-    r=16,
-    lora_alpha=16,
+    r=_get_env_int("LORA_R", 16),
+    lora_alpha=_get_env_int("LORA_ALPHA", 16),
     target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "up_proj", "down_proj", "gate_proj"],
     # task_type="CAUSAL_LM",
     lora_dropout=0.05,
@@ -198,12 +272,12 @@ training_args = GRPOConfig(
     max_prompt_length=256,
     max_completion_length=786,
     #num_train_epochs=1, # comment out or overriden by setting max_steps 
-    max_steps=1000,  # Set max_steps for quicker testing
-    save_steps=100, # changed for testing
+    max_steps=1,  # Set max_steps for quicker testing
+    save_steps=1, # changed for testing
     max_grad_norm=1.0,
     report_to="wandb",
     log_on_each_node=False,
-    beta=0.0,
+    beta=_get_env_float("GRPO_BETA", 0.0),
     temperature=0.6,
     top_p=0.85,
     top_k=20,

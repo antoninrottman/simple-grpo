@@ -24,6 +24,24 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+def _get_env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise ValueError(f"Invalid float for {name}: {raw}") from exc
+
+def _get_env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise ValueError(f"Invalid int for {name}: {raw}") from exc
+
 # ============================================================================
 # Validate environment variables
 # ============================================================================
@@ -42,7 +60,7 @@ if not RUN_NAME:
 
 EVAL_OUTPUT_DIR = os.getenv("EVAL_OUTPUT_DIR", f"{OUTPUT_DIR}/evaluation_results")
 
-EVAL = os.getenv("EVAL")
+EVAL = os.getenv("EVAL", "NONE")
 
 # ============================================================================
 # Load model and tokenizer
@@ -109,8 +127,8 @@ except Exception:
 
 # PEFT config (optional)
 peft_config = LoraConfig(
-    r=16,
-    lora_alpha=16,
+    r=_get_env_int("LORA_R", 16),
+    lora_alpha=_get_env_int("LORA_ALPHA", 16),
     target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "up_proj", "down_proj", "gate_proj"],
     # task_type="CAUSAL_LM",
     lora_dropout=0.05,
@@ -325,12 +343,12 @@ training_args = GRPOConfig(
     max_prompt_length=256,
     max_completion_length=384,
     #num_train_epochs=1, # comment out or overriden by setting max_steps 
-    max_steps=1000,  # Set max_steps for quicker testing
-    save_steps=100, # changed for testing
+    max_steps=1,  # Set max_steps for quicker testing
+    save_steps=1, # changed for testing
     max_grad_norm=1.0,
     report_to="wandb",
     log_on_each_node=False,
-    beta=0.0,
+    beta=_get_env_float("GRPO_BETA", 0.0),
     temperature=0.6,
     top_p=0.85,
     top_k=20,

@@ -11,6 +11,8 @@ outputs/
 wandb/
 *stdout.txt
 *stderr.txt
+logs/
+results*
 
 # Virtual environments
 .venv
