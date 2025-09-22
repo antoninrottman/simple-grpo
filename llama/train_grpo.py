@@ -123,11 +123,20 @@ Then, provide your solution between {solution_start}{solution_end}"""
 def match_format_exactly(completions, **kwargs):
     scores = []
     for completion in completions:
-        score = 0
         response = completion[0]["content"]
-        # Match if format is seen exactly!
-        if match_format.search(response) is not None: score += 3.0
-        scores.append(score)
+        strict_match = match_format.search(response) is not None
+        has_reasoning = reasoning_start in response and reasoning_end in response
+        has_solution = solution_start in response and solution_end in response
+
+        if strict_match:
+            scores.append(3.0)
+        elif has_reasoning and has_solution:
+            # Near-perfect shaping: correct sections but spacing may be off
+            scores.append(1.5)
+        elif has_reasoning or has_solution:
+            scores.append(0.5)
+        else:
+            scores.append(-0.3)
     return scores
 
 """If it fails, we want to reward the model if it at least follows the format partially, by counting each symbol:"""
@@ -135,15 +144,23 @@ def match_format_exactly(completions, **kwargs):
 def match_format_approximately(completions, **kwargs):
     scores = []
     for completion in completions:
-        score = 0
         response = completion[0]["content"]
-        # Count how many keywords are seen - we penalize if too many!
-        # If we see 1, then plus some points!
-        score += 0.5 if response.count(reasoning_start) == 1 else -1.0
-        score += 0.5 if response.count(reasoning_end)   == 1 else -1.0
-        score += 0.5 if response.count(solution_start)  == 1 else -1.0
-        score += 0.5 if response.count(solution_end)    == 1 else -1.0
-        scores.append(score)
+        total = 0.0
+        for token in (reasoning_start, reasoning_end, solution_start, solution_end):
+            count = response.count(token)
+            if count == 1:
+                total += 0.5
+            elif count > 1:
+                total += max(0.2 - 0.1 * (count - 2), -0.4)
+            else:
+                total -= 0.5
+
+        if solution_end in response:
+            tail = response.split(solution_end, 1)[-1]
+            if tail.strip():
+                total -= min(len(tail.strip()) * 0.002, 0.4)
+
+        scores.append(total)
     return scores
 
 """Finally, we want to extract the generated answer, and reward or penalize it! We also reward it based on how close the answer is to the true one via ratios:"""
@@ -160,27 +177,44 @@ def check_answer(prompts, completions, answer, **kwargs):
 
     scores = []
     for guess, true_answer in zip(extracted_responses, answer):
-        score = 0
         if guess is None:
-            scores.append(0)
+            scores.append(-0.5)
             continue
-        # Correct answer gets 3 points!
-        if guess == true_answer:
-            score += 3.0
-        # Match if spaces are seen, but less reward
-        elif guess.strip() == true_answer.strip():
-            score += 1.5
-        else:
-            # We also reward it if the answer is close via ratios!
-            # Ie if the answer is within some range, reward it!
-            try:
-                ratio = float(guess) / float(true_answer)
-                if   ratio >= 0.9 and ratio <= 1.1: score += 1.0
-                elif ratio >= 0.8 and ratio <= 1.2: score += 0.5
-                else: score -= 1.5 # Penalize wrong answers
-            except:
-                score -= 1.5 # Penalize
-        scores.append(score)
+
+        guess_clean = guess.strip()
+        target_clean = (true_answer or "").strip()
+        if not guess_clean:
+            scores.append(-0.5)
+            continue
+
+        if guess_clean == target_clean:
+            scores.append(3.0)
+            continue
+        if guess_clean.replace(" ", "") == target_clean.replace(" ", ""):
+            scores.append(1.5)
+            continue
+
+        try:
+            g_val = float(guess_clean.replace(",", ""))
+            t_val = float(target_clean.replace(",", ""))
+            diff = abs(g_val - t_val)
+            denom = max(1.0, abs(t_val))
+            rel_err = diff / denom
+            if rel_err <= 0.03:
+                scores.append(2.0)
+            elif rel_err <= 0.1:
+                scores.append(1.0)
+            elif rel_err <= 0.2:
+                scores.append(0.5)
+            else:
+                scores.append(-1.0)
+        except Exception:
+            digits_guess = re.sub(r"\D", "", guess_clean)
+            digits_true = re.sub(r"\D", "", target_clean)
+            if digits_guess and digits_guess == digits_true:
+                scores.append(0.5)
+            else:
+                scores.append(-1.0)
     return scores
 
 """Also sometimes it might not be 1 number as the answer, but like a sentence for example "The solution is $20" -> we extract 20.
@@ -217,17 +251,24 @@ def check_numbers(prompts, completions, answer, **kwargs):
 
     for guess, true_answer in zip(extracted_responses, answer):
         if guess is None:
-            scores.append(0)
+            scores.append(-0.2)
             continue
-        # Convert to numbers
         try:
-            true_answer = float(true_answer.strip())
-            # Remove commas like in 123,456
-            guess       = float(guess.strip().replace(",", ""))
-            scores.append(1.5 if guess == true_answer else -0.5)
-        except:
-            scores.append(0)
-            continue
+            target = float(true_answer.strip().replace(",", ""))
+            value = float(guess.strip().replace(",", ""))
+            diff = abs(value - target)
+            denom = max(1.0, abs(target))
+            rel_err = diff / denom
+            if rel_err <= 0.02:
+                scores.append(1.5)
+            elif rel_err <= 0.08:
+                scores.append(1.0)
+            elif rel_err <= 0.2:
+                scores.append(0.5)
+            else:
+                scores.append(-0.5)
+        except Exception:
+            scores.append(0.0)
     return scores
 
 """Get the maximum prompt length so we don't accidentally truncate it!"""
@@ -271,8 +312,8 @@ training_args = GRPOConfig(
     max_prompt_length=256,
     max_completion_length=786,
     #num_train_epochs=1, # comment out or overriden by setting max_steps 
-    max_steps=1,  # Set max_steps for quicker testing
-    save_steps=1, # changed for testing
+    max_steps=1000,  # Set max_steps for quicker testing
+    save_steps=100, # changed for testing
     max_grad_norm=1.0,
     report_to="wandb",
     log_on_each_node=False,
