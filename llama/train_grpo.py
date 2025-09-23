@@ -3,6 +3,7 @@ import re
 import gc
 import sys
 from pathlib import Path
+from typing import Callable, List
 
 import torch
 from datasets import load_dataset, Dataset
@@ -140,14 +141,14 @@ def match_format_exactly(completions, **kwargs):
         has_solution = solution_start in response and solution_end in response
 
         if strict_match:
-            scores.append(3.0)
+            scores.append(2.0)
         elif has_reasoning and has_solution:
             # Near-perfect shaping: correct sections but spacing may be off
-            scores.append(1.5)
+            scores.append(0.4)
         elif has_reasoning or has_solution:
-            scores.append(0.5)
+            scores.append(0.15)
         else:
-            scores.append(-0.3)
+            scores.append(-0.4)
     return scores
 
 """If it fails, we want to reward the model if it at least follows the format partially, by counting each symbol:"""
@@ -180,52 +181,88 @@ def check_answer(prompts, completions, answer, **kwargs):
     question = prompts[0][-1]["content"]
     responses = [completion[0]["content"] for completion in completions]
 
-    extracted_responses = [
-        guess.group(1)
-        if (guess := match_format.search(r)) is not None else None \
-        for r in responses
-    ]
+    def _extract_candidate(text: str) -> str:
+        match = match_format.search(text)
+        if match is not None:
+            return match.group(1).strip()
 
-    scores = []
-    for guess, true_answer in zip(extracted_responses, answer):
-        if guess is None:
-            scores.append(-0.5)
-            continue
+        alt = extract_hash_answer(text)
+        if alt:
+            return alt.strip()
 
-        guess_clean = guess.strip()
+        if solution_end in text:
+            tail = text.split(solution_end, 1)[-1]
+            tail = tail.strip()
+            if tail:
+                return tail.splitlines()[0].strip()
+
+        return text.rsplit("####", 1)[-1].strip() if "####" in text else text.rsplit("\n", 1)[-1].strip()
+
+    def _normalized(text: str) -> str:
+        return re.sub(r"\s+", "", text).lower().strip(".,;:!?")
+
+    def _parse_float(text: str):
+        cleaned = text.replace(",", "").replace("%", "").strip()
+        match = re.search(r"-?\d+(?:\.\d+)?", cleaned)
+        if match:
+            try:
+                return float(match.group(0))
+            except ValueError:
+                return None
+        return None
+
+    scores: List[float] = []
+    for response, true_answer in zip(responses, answer):
+        candidate = _extract_candidate(response)
         target_clean = (true_answer or "").strip()
-        if not guess_clean:
-            scores.append(-0.5)
+
+        if not candidate:
+            scores.append(-0.2)
             continue
 
-        if guess_clean == target_clean:
+        guess_norm = _normalized(candidate)
+        target_norm = _normalized(target_clean)
+
+        if not target_norm:
+            scores.append(0.0)
+            continue
+
+        if guess_norm == target_norm:
             scores.append(3.0)
             continue
-        if guess_clean.replace(" ", "") == target_clean.replace(" ", ""):
-            scores.append(1.5)
+
+        if target_norm in guess_norm or guess_norm in target_norm:
+            scores.append(2.0)
             continue
 
-        try:
-            g_val = float(guess_clean.replace(",", ""))
-            t_val = float(target_clean.replace(",", ""))
-            diff = abs(g_val - t_val)
-            denom = max(1.0, abs(t_val))
+        guess_float = _parse_float(candidate)
+        target_float = _parse_float(target_clean)
+        if guess_float is not None and target_float is not None:
+            diff = abs(guess_float - target_float)
+            denom = max(1.0, abs(target_float))
             rel_err = diff / denom
-            if rel_err <= 0.03:
-                scores.append(2.0)
-            elif rel_err <= 0.1:
-                scores.append(1.0)
-            elif rel_err <= 0.2:
-                scores.append(0.5)
-            else:
-                scores.append(-1.0)
-        except Exception:
-            digits_guess = re.sub(r"\D", "", guess_clean)
-            digits_true = re.sub(r"\D", "", target_clean)
-            if digits_guess and digits_guess == digits_true:
-                scores.append(0.5)
-            else:
-                scores.append(-1.0)
+            if rel_err <= 0.02:
+                scores.append(1.8)
+                continue
+            if rel_err <= 0.05:
+                scores.append(1.2)
+                continue
+            if rel_err <= 0.15:
+                scores.append(0.6)
+                continue
+
+        digits_guess = re.sub(r"\D", "", candidate)
+        digits_target = re.sub(r"\D", "", target_clean)
+        if digits_guess and digits_target and digits_guess == digits_target:
+            scores.append(0.5)
+            continue
+
+        if target_clean and target_clean.lower() in candidate.lower():
+            scores.append(0.3)
+            continue
+
+        scores.append(-0.3)
+
     return scores
 
 """Also sometimes it might not be 1 number as the answer, but like a sentence for example "The solution is $20" -> we extract 20.
@@ -282,6 +319,18 @@ def check_numbers(prompts, completions, answer, **kwargs):
             scores.append(0.0)
     return scores
 
+
+def scale_reward(reward_fn: Callable, factor: float) -> Callable:
+    def wrapper(*args, **kwargs):
+        base = reward_fn(*args, **kwargs)
+        return [factor * value for value in base]
+
+    return wrapper
+
+
+match_format_exactly_weighted = scale_reward(match_format_exactly, 0.6)
+check_answer_emphasized = scale_reward(check_answer, 1.3)
+
 """Get the maximum prompt length so we don't accidentally truncate it!"""
 
 dataset = load_dataset("openai/gsm8k", "main", split = "train")
@@ -323,7 +372,7 @@ training_args = GRPOConfig(
     max_prompt_length=256,
     max_completion_length=786,
     #num_train_epochs=1, # comment out or overriden by setting max_steps 
-    max_steps=1000,  # Set max_steps for quicker testing
+    max_steps=300,  # Set max_steps for quicker testing
     save_steps=100, # changed for testing
     max_grad_norm=1.0,
     report_to="wandb",
@@ -341,9 +390,9 @@ trainer = GRPOTrainer(
     model=model,
     processing_class=tokenizer,
     reward_funcs = [
-        match_format_exactly,
+        match_format_exactly_weighted,
         match_format_approximately,
-        check_answer,
+        check_answer_emphasized,
         check_numbers,
     ],
     args=training_args,
