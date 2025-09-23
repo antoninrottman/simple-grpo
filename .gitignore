@@ -13,6 +13,8 @@ wandb/
 *stderr.txt
 logs/
 results*
+base_results*
+temp/
 
 # Virtual environments
 .venv
