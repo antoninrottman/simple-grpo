@@ -16,15 +16,21 @@ import weave
 
 _THIS_FILE = Path(__file__).resolve()
 for parent in _THIS_FILE.parents:
-    candidate = parent / "training_monitor.py"
+    bin_dir = parent / "bin"
+    candidate = bin_dir / "training_monitor.py"
     if candidate.exists():
         if str(parent) not in sys.path:
             sys.path.append(str(parent))
+        if str(bin_dir) not in sys.path:
+            sys.path.append(str(bin_dir))
         break
 else:
     fallback_root = _THIS_FILE.parents[1]
     if str(fallback_root) not in sys.path:
         sys.path.append(str(fallback_root))
+    fb_bin = fallback_root / "bin"
+    if fb_bin.exists() and str(fb_bin) not in sys.path:
+        sys.path.append(str(fb_bin))
 
 from training_monitor import StepSystemStatsCallback
 

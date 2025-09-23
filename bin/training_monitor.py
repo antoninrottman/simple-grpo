@@ -49,6 +49,7 @@ class StepSystemStatsCallback(TrainerCallback):
         self.log_interval = max(1, log_interval)
         self._step_start_ts: Optional[float] = None
         self._offload_snapshot: Optional[_OffloadSnapshot] = None
+        self._last_wandb_step: Optional[int] = None
 
     def on_step_begin(self, args, state: TrainerState, control: TrainerControl, **kwargs):
         self._step_start_ts = time.perf_counter()
@@ -74,6 +75,8 @@ class StepSystemStatsCallback(TrainerCallback):
             "step/global": step,
             "step/duration_sec": step_time,
         }
+
+        stats["monitor/global_step"] = step
 
         cpu_rss = _collect_cpu_rss()
         if cpu_rss is not None:
@@ -116,7 +119,14 @@ class StepSystemStatsCallback(TrainerCallback):
             import wandb  # type: ignore
 
             if wandb.run is not None:
-                wandb.log(stats, step=step)
+                run_step = getattr(wandb.run, "step", None)
+                log_step = step
+                if self._last_wandb_step is not None:
+                    log_step = max(log_step, self._last_wandb_step + 1)
+                if run_step is not None:
+                    log_step = max(log_step, int(run_step))
+                wandb.log(stats, step=log_step)
+                self._last_wandb_step = log_step
         except Exception:  # pragma: no cover
             pass
 
