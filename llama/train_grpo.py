@@ -1,6 +1,9 @@
 # train_grpo.py
 import re
 import gc
+import sys
+from pathlib import Path
+
 import torch
 from datasets import load_dataset, Dataset
 from transformers import AutoTokenizer, AutoModelForCausalLM
@@ -10,6 +13,12 @@ import os
 import logging
 import wandb
 import weave
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.append(str(ROOT))
+
+from training_monitor import StepSystemStatsCallback
 
 from lighteval.logging.evaluation_tracker import EvaluationTracker
 from lighteval.models.transformers.transformers_model import TransformersModel, TransformersModelConfig
@@ -339,7 +348,8 @@ trainer = GRPOTrainer(
     ],
     args=training_args,
     train_dataset=dataset,
-    peft_config=peft_config  # Uncomment if PEFT is working for you
+    peft_config=peft_config,
+    callbacks=[StepSystemStatsCallback()],
 )
 
 # ============================================================================
