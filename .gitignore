@@ -12,7 +12,7 @@ wandb/
 *stdout.txt
 *stderr.txt
 logs/
-results*
+*results*
 base_results*
 temp/
 

@@ -3,7 +3,6 @@ import re
 import gc
 import sys
 from pathlib import Path
-from typing import Callable, List
 
 import torch
 from datasets import load_dataset, Dataset
@@ -150,20 +149,11 @@ Then, provide your solution between {solution_start}{solution_end}"""
 def match_format_exactly(completions, **kwargs):
     scores = []
     for completion in completions:
+        score = 0
         response = completion[0]["content"]
-        strict_match = match_format.search(response) is not None
-        has_reasoning = reasoning_start in response and reasoning_end in response
-        has_solution = solution_start in response and solution_end in response
-
-        if strict_match:
-            scores.append(2.0)
-        elif has_reasoning and has_solution:
-            # Near-perfect shaping: correct sections but spacing may be off
-            scores.append(0.4)
-        elif has_reasoning or has_solution:
-            scores.append(0.15)
-        else:
-            scores.append(-0.4)
+        # Match if format is seen exactly!
+        if match_format.search(response) is not None: score += 3.0
+        scores.append(score)
     return scores
 
 """If it fails, we want to reward the model if it at least follows the format partially, by counting each symbol:"""
@@ -171,128 +161,82 @@ def match_format_exactly(completions, **kwargs):
 def match_format_approximately(completions, **kwargs):
     scores = []
     for completion in completions:
+        score = 0
         response = completion[0]["content"]
-        total = 0.0
-        for token in (reasoning_start, reasoning_end, solution_start, solution_end):
-            count = response.count(token)
-            if count == 1:
-                total += 0.5
-            elif count > 1:
-                total += max(0.2 - 0.1 * (count - 2), -0.4)
-            else:
-                total -= 0.5
-
-        if solution_end in response:
-            tail = response.split(solution_end, 1)[-1]
-            if tail.strip():
-                total -= min(len(tail.strip()) * 0.002, 0.4)
-
-        scores.append(total)
+        # Count how many keywords are seen - we penalize if too many!
+        # If we see 1, then plus some points!
+        score += 0.5 if response.count(reasoning_start) == 1 else -0.5
+        score += 0.5 if response.count(reasoning_end)   == 1 else -0.5
+        score += 0.5 if response.count(solution_start)  == 1 else -0.5
+        score += 0.5 if response.count(solution_end)    == 1 else -0.5
+        scores.append(score)
     return scores
 
 """Finally, we want to extract the generated answer, and reward or penalize it! We also reward it based on how close the answer is to the true one via ratios:"""
+# near gemma/train_grpo.py:100
+ANSWER_BLOCK = re.compile(rf"{solution_start}\s*(.*?)\s*{solution_end}", re.DOTALL)
 
-def check_answer(prompts, completions, answer, **kwargs):
-    question = prompts[0][-1]["content"]
-    responses = [completion[0]["content"] for completion in completions]
 
-    def _extract_candidate(text: str) -> str:
-        match = match_format.search(text)
-        if match is not None:
-            return match.group(1).strip()
+def extract_solution(text: str):
+    m = ANSWER_BLOCK.search(text)
+    if m:
+        ans = m.group(1).strip()
+        tail = text.split(solution_end, 1)[1]
+        return ans, tail
+    # fallback: take last number anywhere
+    nums = re.findall(r"-?\d+(?:,\d{3})*(?:\.\d+)?", text)
+    if nums:
+        return nums[-1], ""  # no tail penalty if we had to fallback
+    return None, ""
 
-        alt = extract_hash_answer(text)
-        if alt:
-            return alt.strip()
 
-        if solution_end in text:
-            tail = text.split(solution_end, 1)[-1]
-            tail = tail.strip()
-            if tail:
-                return tail.splitlines()[0].strip()
-
-        return text.rsplit("####", 1)[-1].strip() if "####" in text else text.rsplit("\n", 1)[-1].strip()
-
-    def _normalized(text: str) -> str:
-        return re.sub(r"\s+", "", text).lower().strip(".,;:!?")
-
-    def _parse_float(text: str):
-        cleaned = text.replace(",", "").replace("%", "").strip()
-        match = re.search(r"-?\d+(?:\.\d+)?", cleaned)
-        if match:
-            try:
-                return float(match.group(0))
-            except ValueError:
-                return None
+def to_number(s: str):
+    s = s.replace(",", "").strip()
+    # simple fraction support like "3/4"
+    if "/" in s and all(part.strip().replace('.','',1).lstrip('-').isdigit() for part in s.split("/",1)):
+        a, b = s.split("/",1)
+        try:
+            return float(a) / float(b)
+        except:
+            return None
+    try:
+        return float(s)
+    except:
         return None
 
-    scores: List[float] = []
-    for response, true_answer in zip(responses, answer):
-        candidate = _extract_candidate(response)
-        target_clean = (true_answer or "").strip()
 
-        if not candidate:
-            scores.append(-0.2)
-            continue
-
-        guess_norm = _normalized(candidate)
-        target_norm = _normalized(target_clean)
-
-        if not target_norm:
+def check_answer(prompts, completions, answer, **kwargs):
+    responses = [c[0]["content"] for c in completions]
+    scores = []
+    for r, a in zip(responses, answer):
+        guess_raw, tail = extract_solution(r)
+        if guess_raw is None:
             scores.append(0.0)
             continue
-
-        if guess_norm == target_norm:
-            scores.append(3.0)
-            continue
-
-        if target_norm in guess_norm or guess_norm in target_norm:
-            scores.append(2.0)
-            continue
-
-        guess_float = _parse_float(candidate)
-        target_float = _parse_float(target_clean)
-        if guess_float is not None and target_float is not None:
-            diff = abs(guess_float - target_float)
-            denom = max(1.0, abs(target_float))
-            rel_err = diff / denom
-            if rel_err <= 0.02:
-                scores.append(1.8)
-                continue
-            if rel_err <= 0.05:
-                scores.append(1.2)
-                continue
-            if rel_err <= 0.15:
-                scores.append(0.6)
-                continue
-
-        digits_guess = re.sub(r"\D", "", candidate)
-        digits_target = re.sub(r"\D", "", target_clean)
-        if digits_guess and digits_target and digits_guess == digits_target:
-            scores.append(0.5)
-            continue
-
-        if target_clean and target_clean.lower() in candidate.lower():
-            scores.append(0.3)
-            continue
-
-        scores.append(-0.3)
-
+        score = 0.0
+        if guess_raw.strip() == a.strip():
+            score += 3.0
+        g_num, a_num = to_number(guess_raw), to_number(a)
+        if g_num is not None and a_num is not None:
+            if g_num == a_num:
+                score += 1.5
+            elif abs(g_num - a_num) / max(1.0, abs(a_num)) <= 0.05:
+                score += 0.75
+            elif abs(g_num - a_num) / max(1.0, abs(a_num)) <= 0.10:
+                score += 0.25
+        # penalize tail softly, not invalidate
+        tail_pen = min(0.5, 0.001 * len(tail.strip()))
+        scores.append(score - tail_pen)
     return scores
 
-"""Also sometimes it might not be 1 number as the answer, but like a sentence for example "The solution is $20" -> we extract 20.
 
-We also remove possible commas for example as in 123,456
-"""
+"""Also sometimes it might not be 1 number as the answer, but like a sentence for example "The solution is $20" -> we extract 20."""
+
 match_numbers = re.compile(
-    solution_start + r".*?([\d\.\,]{1,})",
+    rf"{solution_start}.*?([\d\.]{{1,}})",
     flags = re.MULTILINE | re.DOTALL
 )
 
-global PRINTED_TIMES
-PRINTED_TIMES = 0
-global PRINT_EVERY_STEPS
-PRINT_EVERY_STEPS = 5
 
 def check_numbers(prompts, completions, answer, **kwargs):
     question = prompts[0][-1]["content"]
@@ -305,46 +249,21 @@ def check_numbers(prompts, completions, answer, **kwargs):
     ]
 
     scores = []
-    # Print only every few steps
-    global PRINTED_TIMES
-    global PRINT_EVERY_STEPS
-    if PRINTED_TIMES % PRINT_EVERY_STEPS == 0:
-        print('*'*20, f"Question:\n{question}", f"\nAnswer:\n{answer[0]}", f"\nResponse:\n{responses[0]}", f"\nExtracted:\n{extracted_responses[0]}")
-    PRINTED_TIMES += 1
-
+    print('*'*20, f"Question:\n{question}", f"\nAnswer:\n{answer[0]}", f"\nResponse:\n{responses[0]}", f"\nExtracted:\n{extracted_responses[0]}")
     for guess, true_answer in zip(extracted_responses, answer):
         if guess is None:
-            scores.append(-0.2)
+            scores.append(0)
             continue
+        # Convert to numbers
         try:
-            target = float(true_answer.strip().replace(",", ""))
-            value = float(guess.strip().replace(",", ""))
-            diff = abs(value - target)
-            denom = max(1.0, abs(target))
-            rel_err = diff / denom
-            if rel_err <= 0.02:
-                scores.append(1.5)
-            elif rel_err <= 0.08:
-                scores.append(1.0)
-            elif rel_err <= 0.2:
-                scores.append(0.5)
-            else:
-                scores.append(-0.5)
-        except Exception:
-            scores.append(0.0)
+            true_answer = float(true_answer.strip())
+            guess       = float(guess.strip())
+            scores.append(1.5 if guess == true_answer else 0.0)
+        except:
+            scores.append(0)
+            continue
     return scores
 
-
-def scale_reward(reward_fn: Callable, factor: float) -> Callable:
-    def wrapper(*args, **kwargs):
-        base = reward_fn(*args, **kwargs)
-        return [factor * value for value in base]
-
-    return wrapper
-
-
-match_format_exactly_weighted = scale_reward(match_format_exactly, 0.6)
-check_answer_emphasized = scale_reward(check_answer, 1.3)
 
 """Get the maximum prompt length so we don't accidentally truncate it!"""
 
@@ -405,9 +324,9 @@ trainer = GRPOTrainer(
     model=model,
     processing_class=tokenizer,
     reward_funcs = [
-        match_format_exactly_weighted,
+        match_format_exactly,
         match_format_approximately,
-        check_answer_emphasized,
+        check_answer,
         check_numbers,
     ],
     args=training_args,
