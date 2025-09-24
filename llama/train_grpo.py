@@ -35,6 +35,7 @@ else:  # fallback to immediate parent to preserve previous behaviour
         sys.path.append(str(fb_bin))
 
 from training_monitor import StepSystemStatsCallback
+from kl_profiler import KLProfilerCallback
 
 from lighteval.logging.evaluation_tracker import EvaluationTracker
 from lighteval.models.transformers.transformers_model import TransformersModel, TransformersModelConfig
@@ -66,6 +67,13 @@ def _get_env_int(name: str, default: int) -> int:
     except ValueError as exc:
         raise ValueError(f"Invalid int for {name}: {raw}") from exc
 
+
+def _get_env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
 # ============================================================================
 # Validate environment variables
 # ============================================================================
@@ -86,6 +94,12 @@ EVAL_OUTPUT_DIR = os.getenv("EVAL_OUTPUT_DIR", f"{OUTPUT_DIR}/evaluation_results
 
 EVAL = os.getenv("EVAL", "NONE")
 
+KL_PROFILER_ENABLED = _get_env_flag("KL_PROFILER")
+KL_FREQ = _get_env_int("KL_FREQ", 50)
+KL_BATCH = _get_env_int("KL_BATCH", 2)
+KL_MAX_TOKENS = _get_env_int("KL_MAX_TOKENS", 256)
+KL_REF_NAME = os.getenv("KL_REF_NAME", MODEL_NAME)
+
 
 # ============================================================================
 # Load model and tokenizer
@@ -104,6 +118,20 @@ except Exception as e:
 
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 tokenizer.pad_token = tokenizer.eos_token
+
+kl_ref_model = None
+if KL_PROFILER_ENABLED:
+    try:
+        kl_ref_model = AutoModelForCausalLM.from_pretrained(
+            KL_REF_NAME,
+            torch_dtype=torch.float16,
+            attn_implementation="sdpa",
+            device_map="auto"
+        ).to("cuda")
+        logger.info("KL profiler reference model loaded: %s", KL_REF_NAME)
+    except Exception as e:
+        logger.error(f"Failed to load KL reference model: {e}")
+        raise
 
 # PEFT config (optional)
 LORA_R = _get_env_int("LORA_R", 16)
@@ -311,6 +339,25 @@ training_args = GRPOConfig(
 
 
 # Trainer setup
+callbacks = [StepSystemStatsCallback()]
+if KL_PROFILER_ENABLED and kl_ref_model is not None:
+    logger.info(
+        "KL profiler enabled | freq=%s | batch=%s | max_tokens=%s",
+        KL_FREQ,
+        KL_BATCH,
+        KL_MAX_TOKENS,
+    )
+    callbacks.append(
+        KLProfilerCallback(
+            tokenizer=tokenizer,
+            ref_model=kl_ref_model,
+            sample_dataset=dataset,
+            freq=KL_FREQ,
+            batch_size=KL_BATCH,
+            max_tokens=KL_MAX_TOKENS,
+        )
+    )
+
 trainer = GRPOTrainer(
     model=model,
     processing_class=tokenizer,
@@ -323,7 +370,7 @@ trainer = GRPOTrainer(
     args=training_args,
     train_dataset=dataset,
     peft_config=peft_config,
-    callbacks=[StepSystemStatsCallback()],
+    callbacks=callbacks,
 )
 
 # ============================================================================
