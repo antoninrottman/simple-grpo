@@ -15,6 +15,12 @@ import logging
 import wandb
 import weave
 
+
+# this is to force the reference policy loading to
+# compare with and without KL.
+os.environ["TRL_FORCE_REF_MODEL"] = "1"
+
+
 _THIS_FILE = Path(__file__).resolve()
 for parent in _THIS_FILE.parents:
     bin_dir = parent / "bin"
