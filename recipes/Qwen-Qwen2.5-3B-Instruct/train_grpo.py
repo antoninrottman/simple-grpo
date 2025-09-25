@@ -1,11 +1,10 @@
 # train_grpo.py
 import re
-import gc
 import sys
 from pathlib import Path
-from typing import Callable, List
 
 import torch
+import gc
 from datasets import load_dataset, Dataset
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from peft import LoraConfig
@@ -14,7 +13,6 @@ import os
 import logging
 import wandb
 import weave
-
 
 _THIS_FILE = Path(__file__).resolve()
 for parent in _THIS_FILE.parents:
@@ -26,7 +24,7 @@ for parent in _THIS_FILE.parents:
         if str(bin_dir) not in sys.path:
             sys.path.append(str(bin_dir))
         break
-else:  # fallback to immediate parent to preserve previous behaviour
+else:
     fallback_root = _THIS_FILE.parents[1]
     if str(fallback_root) not in sys.path:
         sys.path.append(str(fallback_root))
@@ -70,7 +68,7 @@ def _get_env_int(name: str, default: int) -> int:
 # Validate environment variables
 # ============================================================================
 
-MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-1.5B-Instruct")
+MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-3B-Instruct")
 if not MODEL_NAME:
     raise ValueError("MODEL_NAME environment variable is not set.")
 
@@ -86,11 +84,175 @@ EVAL_OUTPUT_DIR = os.getenv("EVAL_OUTPUT_DIR", f"{OUTPUT_DIR}/evaluation_results
 
 EVAL = os.getenv("EVAL", "NONE")
 
+# ============================================================================
+# Reward function and dataset configuration
+# ============================================================================
+
+# Load and prep dataset
+SYSTEM_PROMPT = """
+Respond in the following format:
+
+<reasoning>
+...
+</reasoning>
+<answer>
+...
+</answer>
+"""
+
+XML_COT_FORMAT = """\
+<reasoning>
+{reasoning}
+</reasoning>
+<answer>
+{answer}
+</answer>
+"""
+
+def extract_xml_answer(text: str) -> str:
+    """Extracts the answer from XML-formatted text."""
+    try:
+        answer = text.split("<answer>")[-1].split("</answer>")[0].strip()
+        return answer
+    except IndexError:
+        logger.warning("Failed to extract answer from XML format.")
+        return ""
+
+def extract_hash_answer(text: str) -> str | None:
+    """Extracts the answer from a hash-formatted string."""
+    if "####" not in text:
+        return None
+    return text.split("####")[1].strip()
+
+
+def _to_number(candidate: str | None) -> float | None:
+    """Lenient numeric parsing used by rewards to reduce sparsity."""
+    if candidate is None:
+        return None
+    s = candidate.strip().replace(",", "")
+    if not s:
+        return None
+    # Simple fraction support like 3/4
+    if "/" in s:
+        a, b = s.split("/", 1)
+        try:
+            return float(a) / float(b)
+        except Exception:
+            pass
+    try:
+        return float(s)
+    except Exception:
+        return None
+
+
+
+# Configurable one-shot prompting
+def get_gsm8k_questions(split="train", use_one_shot=False) -> Dataset:
+    """Loads and prepares the GSM8K dataset with optional one-shot prompting."""
+    try:
+        data = load_dataset('openai/gsm8k', 'main')[split]
+    except Exception as e:
+        logger.error(f"Failed to load dataset: {e}")
+        raise
+
+    def format_example(x):
+        prompt = [{'role': 'system', 'content': SYSTEM_PROMPT}]
+        if use_one_shot:
+            prompt.extend([
+                {'role': 'user', 'content': 'What is the largest single-digit prime number?'},
+                {'role': 'assistant', 'content': XML_COT_FORMAT.format(
+                    reasoning="9 is divisible by 3 and 8 is divisible by 2, but 7 is prime.",
+                    answer="7"
+                )}
+            ])
+        prompt.append({'role': 'user', 'content': x['question']})
+        return {'prompt': prompt, 'answer': extract_hash_answer(x['answer'])}
+
+    return data.map(format_example)
+
+dataset = get_gsm8k_questions(use_one_shot=True)
+
+# Reward functions
+def correctness_reward_func(prompts, completions, answer, **kwargs) -> list[float]:
+    """Reward exact matches, with smooth fallback on numeric closeness.
+
+    Keeps the name and intent of the existing reward while reducing sparsity
+    for cases where the predicted number is near the gold answer.
+    """
+    golds = answer if isinstance(answer, list) else [answer] * len(completions)
+    preds = [extract_xml_answer(c[0]['content']) for c in completions]
+
+    rewards: list[float] = []
+    for pred, gold in zip(preds, golds):
+        # Exact string match first
+        if pred.strip() == (gold or "").strip():
+            rewards.append(2.0)
+            continue
+        # Numeric partial credit
+        p = _to_number(pred)
+        g = _to_number(gold)
+        if p is None or g is None:
+            rewards.append(0.0)
+            continue
+        rel_err = abs(p - g) / max(1.0, abs(g))
+        # full credit at 0 err -> 2.0; 0 at >= 50% rel error
+        shaped = max(0.0, 1.0 - (rel_err / 0.5)) * 2.0
+        rewards.append(shaped)
+    return rewards
+
+def int_reward_func(completions, **kwargs) -> list[float]:
+    """Reward if the extracted response parses as a number (lenient)."""
+    responses = [completion[0]['content'] for completion in completions]
+    extracted_responses = [extract_xml_answer(r) for r in responses]
+    scores = []
+    for r in extracted_responses:
+        val = _to_number(r)
+        scores.append(0.5 if val is not None else 0.0)
+    return scores
+
+def format_reward_func(completions, strict=False, **kwargs) -> list[float]:
+    """Reward well-formed outputs with partial credit when both sections exist.
+
+    - 0.5 if matches the canonical strict multi-line block
+    - 0.25 if both <reasoning>…</reasoning> and <answer>…</answer> are present (any spacing)
+    - 0.0 otherwise
+    """
+    strict_pattern = r"^<reasoning>\n.*?\n</reasoning>\n<answer>\n.*?\n</answer>\n$"
+    loose_has_both = r"<reasoning>.*?</reasoning>.*?<answer>.*?</answer>"
+    responses = [completion[0]["content"] for completion in completions]
+    scores = []
+    for r in responses:
+        if re.match(strict_pattern, r, flags=re.DOTALL):
+            scores.append(0.5)
+        elif re.search(loose_has_both, r, flags=re.DOTALL):
+            scores.append(0.25)
+        else:
+            scores.append(0.0)
+    return scores
+
+def xmlcount_reward_func(completions, **kwargs) -> list[float]:
+    """Calculates reward based on XML tag counts."""
+    contents = [completion[0]["content"] for completion in completions]
+    return [count_xml(c) for c in contents]
+
+def count_xml(text) -> float:
+    """Counts XML tags and penalizes extra content."""
+    count = 0.0
+    if text.count("<reasoning>\n") == 1:
+        count += 0.125
+    if text.count("\n</reasoning>\n") == 1:
+        count += 0.125
+    if text.count("\n<answer>\n") == 1:
+        count += 0.125
+        count -= len(text.split("\n</answer>\n")[-1]) * 0.001
+    if text.count("\n</answer>") == 1:
+        count += 0.125
+        count -= (len(text.split("\n</answer>")[-1]) - 1) * 0.001
+    return count
 
 # ============================================================================
-# Load model and tokenizer
+# Model and training configuation
 # ============================================================================
-
 try:
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_NAME,
@@ -116,168 +278,6 @@ peft_config = LoraConfig(
     lora_dropout=0.05,
 )
 
-
-
-# # ============================================================================
-# # Reward function and dataset configuration
-# # ============================================================================
-def extract_hash_answer(text):
-    if "####" not in text: return None
-    return text.split("####")[1].strip()
-
-"""We now create a system prompt which can be customized. We add 4 extra symbols for working out or thinking / reasoning sections and a final answer:"""
-
-reasoning_start = "<start_working_out>"
-reasoning_end   = "<end_working_out>"
-solution_start = "<SOLUTION>"
-solution_end = "</SOLUTION>"
-
-match_format = re.compile(
-    rf"^[\s]{{0,}}"\
-    rf"{reasoning_start}.+?{reasoning_end}.*?"\
-    rf"{solution_start}(.+?){solution_end}"\
-    rf"[\s]{{0,}}$",
-    flags = re.MULTILINE | re.DOTALL
-)
-
-system_prompt = \
-f"""You are given a problem.
-Think about the problem and provide your working out.
-Place it between {reasoning_start} and {reasoning_end}.
-Then, provide your solution between {solution_start}{solution_end}"""
-
-
-def match_format_exactly(completions, **kwargs):
-    scores = []
-    for completion in completions:
-        score = 0
-        response = completion[0]["content"]
-        # Match if format is seen exactly!
-        if match_format.search(response) is not None: score += 3.0
-        scores.append(score)
-    return scores
-
-"""If it fails, we want to reward the model if it at least follows the format partially, by counting each symbol:"""
-
-def match_format_approximately(completions, **kwargs):
-    scores = []
-    for completion in completions:
-        score = 0
-        response = completion[0]["content"]
-        # Count how many keywords are seen - we penalize if too many!
-        # If we see 1, then plus some points!
-        score += 0.5 if response.count(reasoning_start) == 1 else -1.0
-        score += 0.5 if response.count(reasoning_end)   == 1 else -1.0
-        score += 0.5 if response.count(solution_start)  == 1 else -1.0
-        score += 0.5 if response.count(solution_end)    == 1 else -1.0
-        scores.append(score)
-    return scores
-
-"""Finally, we want to extract the generated answer, and reward or penalize it! We also reward it based on how close the answer is to the true one via ratios:"""
-
-def check_answer(prompts, completions, answer, **kwargs):
-    question = prompts[0][-1]["content"]
-    responses = [completion[0]["content"] for completion in completions]
-
-    extracted_responses = [
-        guess.group(1)
-        if (guess := match_format.search(r)) is not None else None \
-        for r in responses
-    ]
-
-    scores = []
-    for guess, true_answer in zip(extracted_responses, answer):
-        score = 0
-        if guess is None:
-            scores.append(0)
-            continue
-        # Correct answer gets 3 points!
-        if guess == true_answer:
-            score += 3.0
-        # Match if spaces are seen, but less reward
-        elif guess.strip() == true_answer.strip():
-            score += 1.5
-        else:
-            # We also reward it if the answer is close via ratios!
-            # Ie if the answer is within some range, reward it!
-            try:
-                ratio = float(guess) / float(true_answer)
-                if   ratio >= 0.9 and ratio <= 1.1: score += 1.0
-                elif ratio >= 0.8 and ratio <= 1.2: score += 0.5
-                else: score -= 1.5 # Penalize wrong answers
-            except:
-                score -= 1.5 # Penalize
-        scores.append(score)
-    return scores
-
-"""Also sometimes it might not be 1 number as the answer, but like a sentence for example "The solution is $20" -> we extract 20.
-
-We also remove possible commas for example as in 123,456
-"""
-match_numbers = re.compile(
-    solution_start + r".*?([\d\.\,]{1,})",
-    flags = re.MULTILINE | re.DOTALL
-)
-
-global PRINTED_TIMES
-PRINTED_TIMES = 0
-global PRINT_EVERY_STEPS
-PRINT_EVERY_STEPS = 5
-
-def check_numbers(prompts, completions, answer, **kwargs):
-    question = prompts[0][-1]["content"]
-    responses = [completion[0]["content"] for completion in completions]
-
-    extracted_responses = [
-        guess.group(1)
-        if (guess := match_numbers.search(r)) is not None else None \
-        for r in responses
-    ]
-
-    scores = []
-    # Print only every few steps
-    global PRINTED_TIMES
-    global PRINT_EVERY_STEPS
-    if PRINTED_TIMES % PRINT_EVERY_STEPS == 0:
-        print('*'*20, f"Question:\n{question}", f"\nAnswer:\n{answer[0]}", f"\nResponse:\n{responses[0]}", f"\nExtracted:\n{extracted_responses[0]}")
-    PRINTED_TIMES += 1
-
-    for guess, true_answer in zip(extracted_responses, answer):
-        if guess is None:
-            scores.append(0)
-            continue
-        # Convert to numbers
-        try:
-            true_answer = float(true_answer.strip())
-            # Remove commas like in 123,456
-            guess       = float(guess.strip().replace(",", ""))
-            scores.append(1.5 if guess == true_answer else -0.5)
-        except:
-            scores.append(0)
-            continue
-    return scores
-
-"""Get the maximum prompt length so we don't accidentally truncate it!"""
-
-dataset = load_dataset("openai/gsm8k", "main", split = "train")
-
-dataset = dataset.map(lambda x: {
-    "prompt" : [
-        {"role": "system", "content": system_prompt},
-        {"role": "user",   "content": x["question"]},
-    ],
-    "answer": extract_hash_answer(x["answer"]),
-})
-
-
-max(dataset.map(
-    lambda x: {"tokens" : tokenizer.apply_chat_template(x["prompt"], add_generation_prompt = True, tokenize = True)},
-    batched = True,
-).map(lambda x: {"length" : len(x["tokens"])})["length"])
-# ============================================================================
-# Training configuration
-# ============================================================================
-
 # Training config
 training_args = GRPOConfig(
     output_dir=OUTPUT_DIR,
@@ -295,30 +295,29 @@ training_args = GRPOConfig(
     gradient_accumulation_steps=8,
     num_generations=16,  # Reduced from 16
     max_prompt_length=256,
-    max_completion_length=768,
+    max_completion_length=786,
     #num_train_epochs=1, # comment out or overriden by setting max_steps 
-    max_steps=500,  # Set max_steps for quicker testing
+    max_steps=200,  # Set max_steps for quicker testing
     save_steps=100, # changed for testing
     max_grad_norm=1.0,
     report_to="wandb",
     log_on_each_node=False,
-    beta=_get_env_float("GRPO_BETA", 0.05),
+    beta=_get_env_float("GRPO_BETA", 0.0),
     temperature=0.6,
     top_p=0.85,
     top_k=20,
     repetition_penalty=1.05,
 )
 
-
 # Trainer setup
 trainer = GRPOTrainer(
     model=model,
     processing_class=tokenizer,
-    reward_funcs = [
-        match_format_exactly,
-        match_format_approximately,
-        check_answer,
-        check_numbers,
+    reward_funcs=[
+        xmlcount_reward_func,
+        format_reward_func,  # No need for lambda, just pass the function
+        int_reward_func,
+        correctness_reward_func
     ],
     args=training_args,
     train_dataset=dataset,

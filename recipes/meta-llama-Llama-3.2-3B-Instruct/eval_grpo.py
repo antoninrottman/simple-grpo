@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 # Validate environment variables
 # ============================================================================
 
-MODEL_NAME = os.getenv("MODEL_NAME")
+MODEL_NAME = os.getenv("MODEL_NAME", "meta-llama/Llama-3.2-3B-Instruct")
 if not MODEL_NAME:
     raise ValueError("MODEL_NAME environment variable is not set.")
 
@@ -53,7 +53,7 @@ try:
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_NAME,
         torch_dtype=torch.float16,
-        attn_implementation="eager",
+        attn_implementation="sdpa",
         device_map="auto"
     ).to("cuda")
 except Exception as e:

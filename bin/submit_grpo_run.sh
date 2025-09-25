@@ -6,7 +6,7 @@ usage() {
 Usage: submit_grpo_run.sh --model MODEL --beta VALUE --lora-r VALUE [options]
 
 Required arguments:
-  --model MODEL            One of: gemma, llama, qwen
+  --model MODEL            One of: google-gemma-3-1b-it, Qwen-Qwen2.5-1.5B-Instruct, Qwen-Qwen2.5-3B-Instruct, meta-llama-Llama-3.2-1B-Instruct, meta-llama-Llama-3.2-3B-Instruct
   --beta VALUE             GRPO beta value (e.g. 0 or 0.05)
   --lora-r VALUE           LoRA rank (integer)
 
@@ -17,7 +17,7 @@ Optional arguments:
   --hf-model NAME          Override Hugging Face model name
   --eval-mode MODE         CLI (default) or NONE
   --scratch-root PATH      Scratch root (default: /scratch/izar/rottman/simple-grpo)
-  --results-root PATH      Root where results_run_* directories are written (default: repo root)
+  --results-root PATH      Root where results_run_* directories are written (default: repo_root/outputs)
   --dry-run                Print sbatch command without submitting
   -h, --help               Show this message
 EOF
@@ -26,7 +26,7 @@ EOF
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 DEFAULT_SCRATCH="/scratch/izar/rottman/simple-grpo"
 DEFAULT_EVAL_MODE="CLI"
-DEFAULT_RESULTS_ROOT="$REPO_ROOT"
+DEFAULT_RESULTS_ROOT="$REPO_ROOT/outputs"
 
 MODEL=""
 BETA=""
@@ -82,7 +82,7 @@ if [[ -z $MODEL || -z $BETA || -z $LORA_R ]]; then
 fi
 
 case $MODEL in
-  gemma|llama|qwen) ;;
+  google-gemma-3-1b-it|Qwen-Qwen2.5-1.5B-Instruct|Qwen-Qwen2.5-3B-Instruct|meta-llama-Llama-3.2-1B-Instruct|meta-llama-Llama-3.2-3B-Instruct) ;;
   *) echo "Invalid model: $MODEL" >&2; exit 1 ;;
 esac
 
@@ -92,7 +92,7 @@ case $EVAL_MODE in
 esac
 
 sanitize() {
-  echo "$1" | sed -e 's/-/m/g' -e 's/\./p/g' -e 's/[^0-9a-zA-Z]/_/g'
+  echo "$1" | tr -c 'A-Za-z0-9' '_'
 }
 
 if [[ -z $SWEEP_NAME ]]; then

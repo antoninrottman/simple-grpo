@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 # Validate environment variables
 # ============================================================================
 
-MODEL_NAME = os.getenv("MODEL_NAME")
+MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-1.5B-Instruct")
 if not MODEL_NAME:
     raise ValueError("MODEL_NAME environment variable is not set.")
 

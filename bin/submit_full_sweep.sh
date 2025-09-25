@@ -9,7 +9,7 @@ if [[ ! -x $SUBMIT_SCRIPT ]]; then
   exit 1
 fi
 
-DEFAULT_MODELS=(gemma llama qwen)
+DEFAULT_MODELS=(google-gemma-3-1b-it Qwen-Qwen2.5-1.5B-Instruct Qwen-Qwen2.5-3B-Instruct meta-llama-Llama-3.2-1B-Instruct meta-llama-Llama-3.2-3B-Instruct)
 DEFAULT_BETAS=(0 0.05)
 DEFAULT_LORA_VALUES=(1 2 4 8 16 32 64)
 SWEEP_NAME=""
@@ -25,7 +25,7 @@ Usage: submit_full_sweep.sh [options]
 
 Options:
   --sweep-name NAME        Override results_run_* directory name
-  --models LIST            Comma-separated subset of models (default: gemma,llama,qwen)
+  --models LIST            Comma-separated subset of models (default: google-gemma-3-1b-it,Qwen-Qwen2.5-1.5B-Instruct,Qwen-Qwen2.5-3B-Instruct,meta-llama-Llama-3.2-1B-Instruct,meta-llama-Llama-3.2-3B-Instruct)
   --betas LIST             Comma-separated beta values (default: 0,0.05)
   --lora-values LIST       Comma-separated LoRA ranks (default: 1,2,4,8,16,32,64)
   --eval-mode MODE         CLI (default) or NONE
@@ -54,7 +54,7 @@ LORA_VALUES=(${SELECTED_LORA[@]:-${DEFAULT_LORA_VALUES[@]}})
 
 for model in "${MODELS[@]}"; do
   case $model in
-    gemma|llama|qwen) ;;
+    google-gemma-3-1b-it|Qwen-Qwen25-1.5B-Instruct|Qwen-Qwen2.5-3B-Instruct|meta-llama-Llama-3.2-1B-Instruct|meta-llama-Llama-3.2-3B-Instruct) ;;
     *) echo "Invalid model: $model" >&2; exit 1 ;;
   esac
 done

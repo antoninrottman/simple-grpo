@@ -15,7 +15,7 @@ module load gcc/11.3.0
 module load cuda/11.8.0
 source /home/rottman/simple-grpo/.venv/bin/activate
 
-MODEL_KEY=${MODEL_KEY:?MODEL_KEY must be set to gemma, llama, or qwen}
+MODEL_KEY=${MODEL_KEY:?MODEL_KEY must be set to google-gemma-3-1b-it, Qwen-Qwen2.5-1.5B-Instruct, Qwen-Qwen2.5-3B-Instruct, meta-llama-Llama-3.2-1B-Instruct, or meta-llama-Llama-3.2-3B-Instruct}
 RUN_NAME=${RUN_NAME:?RUN_NAME must be set}
 SWEEP_NAME=${SWEEP_NAME:?SWEEP_NAME must be set (e.g. results_run_YYYYmmdd-HHMM)}
 GRPO_BETA=${GRPO_BETA:?GRPO_BETA must be set}
@@ -23,19 +23,26 @@ LORA_R=${LORA_R:?LORA_R must be set}
 LORA_ALPHA=${LORA_ALPHA:-$LORA_R}
 SCRATCH_ROOT=${SCRATCH_ROOT:-/scratch/izar/rottman/simple-grpo}
 HOME_REPO=${HOME_REPO:-/home/rottman/simple-grpo}
-RESULTS_ROOT=${RESULTS_ROOT:-$HOME_REPO}
+RECIPE_ROOT=${HOME_REPO}/recipes
+RESULTS_ROOT=${RESULTS_ROOT:-$HOME_REPO/outputs}
 EVAL_MODE=${EVAL_MODE:-CLI}
 HF_MODEL_NAME=${HF_MODEL_NAME:-}
 
 case "$MODEL_KEY" in
-  gemma)
+  google-gemma-3-1b-it)
     DEFAULT_MODEL_NAME="google/gemma-3-1b-it"
     ;;
-  llama)
-    DEFAULT_MODEL_NAME="meta-llama/Llama-3.2-3B-Instruct"
+  Qwen-Qwen2.5-1.5B-Instruct)
+    DEFAULT_MODEL_NAME="Qwen/Qwen2.5-1.5B-Instruct"
     ;;
-  qwen)
+  Qwen-Qwen2.5-3B-Instruct)
     DEFAULT_MODEL_NAME="Qwen/Qwen2.5-3B-Instruct"
+    ;;
+  meta-llama-Llama-3.2-1B-Instruct)
+    DEFAULT_MODEL_NAME="meta-llama/Llama-3.2-1B-Instruct"
+    ;;
+  meta-llama-Llama-3.2-3B-Instruct)
+    DEFAULT_MODEL_NAME="meta-llama/Llama-3.2-3B-Instruct"
     ;;
   *)
     echo "Unknown MODEL_KEY: $MODEL_KEY" >&2
@@ -47,27 +54,29 @@ MODEL_NAME=${HF_MODEL_NAME:-$DEFAULT_MODEL_NAME}
 echo "[grpo_train_job] model=$MODEL_KEY hf_model=$MODEL_NAME beta=$GRPO_BETA lora_r=$LORA_R lora_alpha=$LORA_ALPHA run=$RUN_NAME sweep=$SWEEP_NAME"
 
 SCRATCH_RUN_ROOT="$SCRATCH_ROOT/$SWEEP_NAME/$RUN_NAME"
-SCRATCH_MODEL_DIR="$SCRATCH_RUN_ROOT/$MODEL_KEY"
+SCRATCH_RECIPE_DIR="$SCRATCH_RUN_ROOT/$MODEL_KEY"
 SCRATCH_BIN_DIR="$SCRATCH_RUN_ROOT/bin"
 
-mkdir -p "$SCRATCH_MODEL_DIR" "$SCRATCH_BIN_DIR"
+mkdir -p "$RESULTS_ROOT/$SWEEP_NAME"
+
+mkdir -p "$SCRATCH_RECIPE_DIR" "$SCRATCH_BIN_DIR"
 
 RSYNC=$(command -v rsync || true)
 if [[ -n "$RSYNC" ]]; then
-  rsync -a --delete --exclude 'outputs' --exclude 'wandb' "$HOME_REPO/$MODEL_KEY/" "$SCRATCH_MODEL_DIR/"
+  rsync -a --delete --exclude 'outputs' --exclude 'wandb' "$RECIPE_ROOT/$MODEL_KEY/" "$SCRATCH_RECIPE_DIR/"
   rsync -a --delete "$HOME_REPO/bin/" "$SCRATCH_BIN_DIR/"
 else
-  cp -a "$HOME_REPO/$MODEL_KEY/." "$SCRATCH_MODEL_DIR/"
+  cp -a "$RECIPE_ROOT/$MODEL_KEY/." "$SCRATCH_RECIPE_DIR/"
   cp -a "$HOME_REPO/bin/." "$SCRATCH_BIN_DIR/"
 fi
 
-cd "$SCRATCH_MODEL_DIR"
+cd "$SCRATCH_RECIPE_DIR"
 
-echo "[grpo_train_job] working directory: $SCRATCH_MODEL_DIR"
+echo "[grpo_train_job] working directory: $SCRATCH_RECIPE_DIR"
 
 export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True,max_split_size_mb:128"
 export MODEL_NAME
-export OUTPUT_DIR="$SCRATCH_MODEL_DIR/outputs/$RUN_NAME"
+export OUTPUT_DIR="$SCRATCH_RECIPE_DIR/outputs/$RUN_NAME"
 export RUN_NAME
 export EVAL_OUTPUT_DIR="$OUTPUT_DIR/evaluation_results"
 export MERGED_DIR="$OUTPUT_DIR/merged_model"
@@ -179,4 +188,3 @@ if [[ -n "$LATEST_CKPT" ]]; then
     cp -a "$LATEST_CKPT/." "$LAST_CKPT_DEST/"
   fi
 fi
-

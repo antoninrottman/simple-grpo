@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --no-requeue
-#SBATCH --job-name=run1_no_kl_llama_eval
-#SBATCH --output=_run1_no_kl_llama-stdout.txt
-#SBATCH --error=_run1_no_kl_llama-stderr.txt
+#SBATCH --job-name=run1_no_kl_qwen_eval
+#SBATCH --output=_run1_no_kl_qwen-stdout.txt
+#SBATCH --error=_run1_no_kl_qwen-stderr.txt
 #SBATCH --partition=gpu
 #SBATCH --qos=normal
 #SBATCH --nodes=1
@@ -18,9 +18,9 @@ source /home/rottman/simple-grpo/.venv/bin/activate
 
 export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True,max_split_size_mb:128"
 
-export MODEL_NAME="meta-llama/Llama-3.2-1B-Instruct"
-export OUTPUT_DIR="./outputs/run1_no_kl_llama_gsm8k"
-export RUN_NAME="run1_no_kl_llama_gsm8k"
+export MODEL_NAME="Qwen/Qwen2.5-3B-Instruct"
+export OUTPUT_DIR="./outputs/run1_no_kl_qwen_gsm8k"
+export RUN_NAME="run1_no_kl_qwen_gsm8k"
 export EVAL_OUTPUT_DIR="${OUTPUT_DIR}/evaluation_results"
 export MERGED_DIR="${OUTPUT_DIR}/merged_model"
 export EVAL="CLI" # API or CLI or NONE
@@ -39,7 +39,6 @@ if [[ "${EVAL:-}" == "CLI" ]]; then
     bash ../bin/run_eval.sh "$MERGED_DIR" "$EVAL_OUTPUT_DIR"
     exit 0
 fi
-
 
 
 
