@@ -11,7 +11,7 @@ fi
 
 DEFAULT_MODELS=(google-gemma-3-1b-it Qwen-Qwen2.5-1.5B-Instruct Qwen-Qwen2.5-3B-Instruct meta-llama-Llama-3.2-1B-Instruct meta-llama-Llama-3.2-3B-Instruct)
 DEFAULT_BETAS=(0 0.05)
-DEFAULT_LORA_VALUES=(1 2 4 8 16 32 64)
+DEFAULT_LORA_VALUES=( 4 8 16 32 64 128)
 SWEEP_NAME=""
 EVAL_MODE="CLI"
 DRY_RUN=0

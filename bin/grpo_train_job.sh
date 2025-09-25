@@ -84,6 +84,7 @@ export LORA_R
 export LORA_ALPHA
 export GRPO_BETA
 export EVAL="$EVAL_MODE"
+export WANDB_PROJECT="llama_sweep_25sept"
 
 mkdir -p "$EVAL_OUTPUT_DIR" "$MERGED_DIR"
 
