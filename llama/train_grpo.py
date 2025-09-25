@@ -15,6 +15,9 @@ import logging
 import wandb
 import weave
 
+# this is to force the reference policy loading to
+# compare with and without KL.
+os.environ["TRL_FORCE_REF_MODEL"] = "1"
 
 _THIS_FILE = Path(__file__).resolve()
 for parent in _THIS_FILE.parents:
@@ -372,6 +375,9 @@ trainer = GRPOTrainer(
     peft_config=peft_config,
     callbacks=callbacks,
 )
+
+# sanity check to make sure the ref policy is loaded.
+print("ref_model present:", trainer.ref_model is not None)
 
 # ============================================================================
 # Training model 

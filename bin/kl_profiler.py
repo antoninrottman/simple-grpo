@@ -165,7 +165,16 @@ class KLProfilerCallback(TrainerCallback):
         if input_ids.size(1) < 2:
             return metrics
 
+        def _sync():
+            if input_ids.is_cuda:
+                try:
+                    torch.cuda.synchronize(input_ids.device)
+                except Exception:
+                    pass
+
         use_autocast = input_ids.device.type == "cuda"
+        # Time policy forward
+        t0 = time.perf_counter()
         try:
             with torch.no_grad():
                 with torch.autocast(device_type=input_ids.device.type, enabled=use_autocast, dtype=torch.float16):
@@ -174,24 +183,38 @@ class KLProfilerCallback(TrainerCallback):
                         attention_mask=attention_mask,
                         use_cache=False,
                     )
-                    ref_out = self.ref_model(
-                        input_ids=input_ids,
-                        attention_mask=attention_mask,
-                        use_cache=False,
-                    )
         except TypeError:
-            # Some models do not accept use_cache
             with torch.no_grad():
                 with torch.autocast(device_type=input_ids.device.type, enabled=use_autocast, dtype=torch.float16):
                     policy_out = model(
                         input_ids=input_ids,
                         attention_mask=attention_mask,
                     )
+        _sync()
+        metrics["kl_profiler/policy_forward_ms"] = (time.perf_counter() - t0) * 1000.0
+
+        # Time reference forward (adapters disabled in the trainer; here ref_model is separate and frozen)
+        t1 = time.perf_counter()
+        try:
+            with torch.no_grad():
+                with torch.autocast(device_type=input_ids.device.type, enabled=use_autocast, dtype=torch.float16):
+                    ref_out = self.ref_model(
+                        input_ids=input_ids,
+                        attention_mask=attention_mask,
+                        use_cache=False,
+                    )
+        except TypeError:
+            with torch.no_grad():
+                with torch.autocast(device_type=input_ids.device.type, enabled=use_autocast, dtype=torch.float16):
                     ref_out = self.ref_model(
                         input_ids=input_ids,
                         attention_mask=attention_mask,
                     )
+        _sync()
+        metrics["kl_profiler/ref_forward_ms"] = (time.perf_counter() - t1) * 1000.0
 
+        # Time softmax + KL compute
+        t2 = time.perf_counter()
         policy_logits = policy_out.logits[:, :-1, :].to(torch.float32)
         ref_logits = ref_out.logits[:, :-1, :].to(torch.float32)
         target_mask = attention_mask[:, 1:].to(torch.float32)
@@ -214,6 +237,7 @@ class KLProfilerCallback(TrainerCallback):
         metrics["kl/entropy_mean"] = entropy_mean_per_seq.mean().item()
         metrics["kl/token_count_mean"] = mask_sum.mean().item()
 
+        metrics["kl_profiler/softmax_kl_ms"] = (time.perf_counter() - t2) * 1000.0
         return metrics
 
     # ------------------------------------------------------------------

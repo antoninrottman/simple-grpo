@@ -1,4 +1,10 @@
-"""Utilities for logging system stats during training."""
+"""Utilities for logging system stats during training.
+
+Adds optional NVML-based GPU utilization/power/temperature metrics when
+``pynvml`` (aka ``nvidia-ml-py3``) is available on the system. This helps
+separate "how much" GPU is used (utilization %) from "how many bytes are
+allocated" (memory), which often stays flat due to the CUDA caching allocator.
+"""
 
 from __future__ import annotations
 
@@ -16,6 +22,11 @@ try:  # optional dependency
     import psutil  # type: ignore
 except Exception:  # pragma: no cover
     psutil = None
+
+try:  # optional dependency for utilization/power/temperature
+    import pynvml  # type: ignore
+except Exception:  # pragma: no cover
+    pynvml = None
 
 
 _logger = logging.getLogger(__name__)
@@ -50,12 +61,24 @@ class StepSystemStatsCallback(TrainerCallback):
         self._step_start_ts: Optional[float] = None
         self._offload_snapshot: Optional[_OffloadSnapshot] = None
         self._last_wandb_step: Optional[int] = None
+        # Cache NVML device handles if available
+        self._nvml_inited = False
+        self._nvml_handles: Dict[int, object] = {}
 
     def on_step_begin(self, args, state: TrainerState, control: TrainerControl, **kwargs):
         self._step_start_ts = time.perf_counter()
         if torch.cuda.is_available():
             for idx in range(torch.cuda.device_count()):
                 torch.cuda.reset_peak_memory_stats(idx)
+        # Lazy-init NVML once we know CUDA is present
+        if not self._nvml_inited and torch.cuda.is_available() and pynvml is not None:
+            try:
+                pynvml.nvmlInit()
+                for idx in range(torch.cuda.device_count()):
+                    self._nvml_handles[idx] = pynvml.nvmlDeviceGetHandleByIndex(idx)
+                self._nvml_inited = True
+            except Exception:  # pragma: no cover
+                self._nvml_inited = False
         return control
 
     def on_step_end(self, args, state: TrainerState, control: TrainerControl, **kwargs):
@@ -88,6 +111,32 @@ class StepSystemStatsCallback(TrainerCallback):
                 stats[f"{prefix}/allocated_mb"] = _bytes_to_mebibytes(torch.cuda.memory_allocated(idx))
                 stats[f"{prefix}/reserved_mb"] = _bytes_to_mebibytes(torch.cuda.memory_reserved(idx))
                 stats[f"{prefix}/peak_mb"] = _bytes_to_mebibytes(torch.cuda.max_memory_allocated(idx))
+                # Optional NVML metrics for utilization/power/temperature
+                if self._nvml_inited and idx in self._nvml_handles:
+                    try:
+                        handle = self._nvml_handles[idx]
+                        util = pynvml.nvmlDeviceGetUtilizationRates(handle)
+                        meminfo = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                        power_w = None
+                        temp_c = None
+                        try:
+                            power_w = pynvml.nvmlDeviceGetPowerUsage(handle) / 1000.0
+                        except Exception:  # pragma: no cover
+                            pass
+                        try:
+                            temp_c = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
+                        except Exception:  # pragma: no cover
+                            pass
+                        stats[f"{prefix}/utilization_pct"] = float(util.gpu)
+                        # Report memory util as percentage of total
+                        if meminfo.total:
+                            stats[f"{prefix}/memory_util_pct"] = float(meminfo.used) * 100.0 / float(meminfo.total)
+                        if power_w is not None:
+                            stats[f"{prefix}/power_w"] = float(power_w)
+                        if temp_c is not None:
+                            stats[f"{prefix}/temp_c"] = float(temp_c)
+                    except Exception:  # pragma: no cover
+                        pass
 
         if self._offload_snapshot is not None:
             total_bytes = self._offload_snapshot.total_bytes or 1
