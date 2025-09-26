@@ -30,7 +30,11 @@ TASK_METRICS = {
 
 
 def find_run_metadata(root: Path) -> Iterable[Path]:
-    return root.glob("results_run*/**/run_metadata.json")
+    # qwen-3B_sweep_26sept
+    return root.glob("/scratch/izar/rottman/simple-grpo/results_run_20250926-083327/**/run_metadata.json")
+    
+    # llama_sweep_25sept
+    #return root.glob("outputs/llama_r_sweep_results/**/run_metadata.json")
 
 
 def load_json(path: Path):
@@ -282,67 +286,111 @@ def make_plot(records, output_path: Path):
         print("matplotlib not available; skipping plot generation")
         return
 
-    comparable = [
-        rec
-        for rec in records
-        if rec.get("baseline_pass_at_1") is not None or rec.get("kl_pass_at_1") is not None
-    ]
-    if not comparable:
+    def parse_rank(raw_rank) -> Optional[float]:
+        if raw_rank is None:
+            return None
+        if isinstance(raw_rank, (int, float)):
+            return float(raw_rank)
+        try:
+            return float(raw_rank)
+        except (TypeError, ValueError):
+            # Handle strings like "r128" by keeping only digits and decimal points.
+            filtered = "".join(ch for ch in str(raw_rank) if (ch.isdigit() or ch == "." or ch == "-"))
+            try:
+                return float(filtered) if filtered else None
+            except ValueError:
+                return None
+
+    series_by_task: Dict[str, Dict[str, Dict[float, Dict[str, float]]]] = defaultdict(
+        lambda: defaultdict(dict)
+    )
+    metric_by_task: Dict[str, str] = {}
+
+    for rec in records:
+        task = rec.get("task")
+        rank = parse_rank(rec.get("lora_r"))
+        if task is None or rank is None:
+            continue
+        metric = rec.get("metric")
+        if metric and task not in metric_by_task:
+            metric_by_task[task] = metric
+
+        baseline_value = rec.get("baseline_pass_at_1")
+        if baseline_value is not None:
+            series_by_task[task]["β=0"][rank] = {
+                "value": baseline_value,
+                "stderr": rec.get("baseline_stderr") or 0.0,
+            }
+
+        kl_beta = rec.get("kl_beta")
+        if kl_beta is not None and math.isclose(float(kl_beta), 0.05, abs_tol=1e-6):
+            kl_value = rec.get("kl_pass_at_1")
+            if kl_value is not None:
+                series_by_task[task]["β=0.05"][rank] = {
+                    "value": kl_value,
+                    "stderr": rec.get("kl_stderr") or 0.0,
+                }
+
+    tasks_with_data = [task for task, beta_map in series_by_task.items() if beta_map]
+    if not tasks_with_data:
         return
 
-    cols = min(3, len(comparable)) or 1
-    rows = math.ceil(len(comparable) / cols)
+    tasks_with_data.sort()
+    cols = min(3, len(tasks_with_data)) or 1
+    rows = math.ceil(len(tasks_with_data) / cols)
     fig, axes = plt.subplots(rows, cols, figsize=(4.5 * cols, 3.5 * rows), squeeze=False)
 
-    palette = ("#5b8def", "#f2994a")
+    palette = {
+        "β=0": "#5b8def",
+        "β=0.05": "#f2994a",
+    }
 
-    for idx, rec in enumerate(comparable):
+    for idx, task in enumerate(tasks_with_data):
         ax = axes[idx // cols][idx % cols]
-        values = []
-        stderrs = []
-        labels = []
+        beta_series = series_by_task[task]
 
-        base_value = rec.get("baseline_pass_at_1")
-        if base_value is not None:
-            values.append(base_value)
-            stderrs.append(rec.get("baseline_stderr") or 0.0)
-            labels.append("β=0")
+        plotted_any = False
+        all_ranks = []
+        for label in ("β=0", "β=0.05"):
+            rank_map = beta_series.get(label)
+            if not rank_map:
+                continue
+            sorted_points = sorted(rank_map.items(), key=lambda item: item[0])
+            ranks = [pt[0] for pt in sorted_points]
+            scores = [pt[1]["value"] for pt in sorted_points]
+            stderrs = [pt[1]["stderr"] for pt in sorted_points]
 
-        kl_value = rec.get("kl_pass_at_1")
-        if kl_value is not None:
-            beta = rec.get("kl_beta")
-            beta_label = f"β={beta}" if beta is not None else "β>0"
-            values.append(kl_value)
-            stderrs.append(rec.get("kl_stderr") or 0.0)
-            labels.append(beta_label)
-
-        colors = [palette[i % len(palette)] for i in range(len(values))]
-        ax.bar(range(len(values)), values, yerr=stderrs, capsize=4, color=colors)
-
-        title = f"{rec['model_key']} | {rec['task']}"
-        subtitle = rec.get("metric")
-        if subtitle:
-            title = f"{subtitle}\n{title}"
-        ax.set_title(title)
-        ax.set_xticks(range(len(values)))
-        ax.set_xticklabels(labels, rotation=0, ha="center", fontsize=10)
-        ax.set_ylabel("pass@1 (1 sample)")
-        ax.grid(axis="y", alpha=0.3)
-        delta = rec.get("kl_minus_baseline")
-        if delta is not None:
-            ax.text(
-                0.5,
-                0.9,
-                f"Δ={delta:+.3f}",
-                transform=ax.transAxes,
-                ha="center",
-                va="center",
-                fontsize=9,
-                color="#333333",
+            ax.errorbar(
+                ranks,
+                scores,
+                yerr=stderrs,
+                capsize=3,
+                marker="o",
+                color=palette.get(label, "#333333"),
+                label=label,
             )
+            plotted_any = True
+            all_ranks.extend(ranks)
+
+        metric = metric_by_task.get(task)
+        title = task
+        if metric:
+            title = f"{metric}\n{task}"
+        ax.set_title(title)
+        ax.set_xlabel("LoRA rank")
+        ax.set_ylabel("score")
+        ax.grid(alpha=0.3)
+        if plotted_any:
+            unique_ranks = sorted(set(all_ranks))
+            display_ranks = [int(r) if float(r).is_integer() else r for r in unique_ranks]
+            ax.set_xticks(unique_ranks)
+            ax.set_xticklabels(display_ranks)
+            ax.legend()
+        else:
+            ax.axis("off")
 
     total_axes = rows * cols
-    for idx in range(len(comparable), total_axes):
+    for idx in range(len(tasks_with_data), total_axes):
         axes[idx // cols][idx % cols].axis("off")
 
     fig.tight_layout()
