@@ -1,6 +1,5 @@
 SWEEP=results_run_20250926-083327
-RUN=grpo_Qwen-Qwen2.5-3B-Instruct_b0__
-r4
+RUN=grpo_Qwen-Qwen2.5-3B-Instruct_b0_05__r8
 MODEL_KEY=Qwen-Qwen2.5-3B-Instruct
 SCRATCH=/scratch/izar/rottman/simple-grpo/$SWEEP/$RUN/staging
 DEST=$HOME/simple-grpo/outputs/$SWEEP/$MODEL_KEY/$RUN

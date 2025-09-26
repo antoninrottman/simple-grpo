@@ -177,15 +177,16 @@ else
 fi
 cp "$STAGING_DIR/run_metadata.json" "$RESULTS_DEST/run_metadata.json"
 
-LATEST_CKPT=$(ls -1d "$OUTPUT_DIR"/checkpoint-* 2>/dev/null | sort -V | tail -n 1 || true)
-if [[ -n "$LATEST_CKPT" ]]; then
-  LAST_CKPT_DEST="$RESULTS_DEST/last_checkpoint"
-  echo "[grpo_train_job] copying latest checkpoint $(basename "$LATEST_CKPT") to $RESULTS_DEST"
-  if [[ -n "$RSYNC" ]]; then
-    rsync -a --delete "$LATEST_CKPT/" "$LAST_CKPT_DEST/"
-  else
-    rm -rf "$LAST_CKPT_DEST"
-    mkdir -p "$LAST_CKPT_DEST"
-    cp -a "$LATEST_CKPT/." "$LAST_CKPT_DEST/"
-  fi
-fi
+# This is to copy the last checkpoint back home
+# LATEST_CKPT=$(ls -1d "$OUTPUT_DIR"/checkpoint-* 2>/dev/null | sort -V | tail -n 1 || true)
+# if [[ -n "$LATEST_CKPT" ]]; then
+#   LAST_CKPT_DEST="$RESULTS_DEST/last_checkpoint"
+#   echo "[grpo_train_job] copying latest checkpoint $(basename "$LATEST_CKPT") to $RESULTS_DEST"
+#   if [[ -n "$RSYNC" ]]; then
+#     rsync -a --delete "$LATEST_CKPT/" "$LAST_CKPT_DEST/"
+#   else
+#     rm -rf "$LAST_CKPT_DEST"
+#     mkdir -p "$LAST_CKPT_DEST"
+#     cp -a "$LATEST_CKPT/." "$LAST_CKPT_DEST/"
+#   fi
+# fi

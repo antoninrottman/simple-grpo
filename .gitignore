@@ -14,7 +14,7 @@ wandb/
 logs/
 *results*
 base_results*
-temp/
+tmp/
 
 # Virtual environments
 .venv
