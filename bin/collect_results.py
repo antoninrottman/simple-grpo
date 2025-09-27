@@ -31,13 +31,13 @@ TASK_METRICS = {
 
 def find_run_metadata(root: Path) -> Iterable[Path]:
     # qwen-3B_sweep_26sept
-    return root.glob("outputs/results_run_20250926-083327/**/run_metadata.json")
+    # return root.glob("outputs/results_run_20250926-083327/**/run_metadata.json")
     
     # llama_sweep_25sept
     # return root.glob("outputs/llama_r_sweep_results/**/run_metadata.json")
 
     # gemma-1B_sweep_26_sept
-    # return root.glob("outputs/results_run_20250926-083432/**/run_metadata.json")
+    return root.glob("outputs/results_run_20250926-133418/**/run_metadata.json")
 
 
 def load_json(path: Path):

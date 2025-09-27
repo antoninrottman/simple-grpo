@@ -17,6 +17,7 @@ dependencies = [
   "weave>=0.52.8",
   "dotenv>=0.9.9",
   "lighteval[math]",
+  "pandas>=2.3.2",
 ]
 
 # Specific versions of torch, torchvision, and torchaudio are installed based on the extra feature
