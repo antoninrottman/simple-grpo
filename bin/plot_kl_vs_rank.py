@@ -189,7 +189,7 @@ def _prepare_pivots(
     betas: Sequence[float] | None = None,
     exclude_betas: Sequence[float] | None = None,
     sweep_col: str = "sweep_alias",
-) -> dict[str, pd.DataFrame]:
+) -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame]]:
     if sweep_col not in df:
         sweep_col = "sweep_name"
 
@@ -204,6 +204,7 @@ def _prepare_pivots(
         raise ValueError("No KL data available for the requested beta filters")
 
     pivots: dict[str, pd.DataFrame] = {}
+    scatters: dict[str, pd.DataFrame] = {}
     for alias, alias_df in subset.groupby(sweep_col):
         pivot = (
             alias_df.groupby(["step", "lora_r"])["metric_kl"]
@@ -214,11 +215,12 @@ def _prepare_pivots(
         pivot = pivot.sort_index()
         if not pivot.empty:
             pivots[str(alias)] = pivot
+            scatters[str(alias)] = alias_df[["step", "lora_r", "metric_kl"]].copy()
 
     if not pivots:
         raise ValueError("No KL data available after grouping by sweep")
 
-    return pivots
+    return pivots, scatters
 
 
 def plot_kl_panels(
@@ -228,12 +230,13 @@ def plot_kl_panels(
     betas: Sequence[float] | None = None,
     exclude_betas: Sequence[float] | None = None,
     sweep_col: str = "sweep_alias",
-    max_points: int = 12,
     log_scale: bool = False,
+    show_points: bool = True,
+    downsample_every: int | None = None,
 ) -> None:
     """Plot KL-vs-step curves for each model on separate panels."""
 
-    pivots = _prepare_pivots(
+    pivots, scatters = _prepare_pivots(
         df,
         betas=betas,
         exclude_betas=exclude_betas,
@@ -250,11 +253,42 @@ def plot_kl_panels(
         axes = [axes]
 
     for ax, (alias, pivot) in zip(axes, pivots.items()):
+        scatter_df = scatters[alias]
+
         plot_df = pivot
-        if max_points and len(plot_df) > max_points:
-            idx = np.linspace(0, len(plot_df) - 1, max_points, dtype=int)
-            idx = np.unique(idx)
-            plot_df = plot_df.iloc[idx]
+
+        if downsample_every is not None and downsample_every > 1:
+            sampled = plot_df.iloc[::downsample_every]
+            if not sampled.empty and sampled.index[-1] != plot_df.index[-1]:
+                sampled = pd.concat([sampled, plot_df.iloc[[-1]]])
+            plot_df = sampled.sort_index()
+            scatter_df = scatter_df[scatter_df["step"].isin(plot_df.index)].copy()
+
+        if log_scale:
+            positive = scatter_df["metric_kl"][scatter_df["metric_kl"] > 0]
+            if positive.empty:
+                raise ValueError(
+                    f"Log scale requested but sweep '{alias}' has no positive KL values"
+                )
+            ax.set_yscale("log")
+
+        if show_points:
+            for rank in all_ranks:
+                rank_points = scatter_df[scatter_df["lora_r"] == rank]
+                if rank_points.empty:
+                    continue
+                if log_scale:
+                    rank_points = rank_points[rank_points["metric_kl"] > 0]
+                    if rank_points.empty:
+                        continue
+                ax.scatter(
+                    rank_points["step"],
+                    rank_points["metric_kl"],
+                    color=rank_colors[rank],
+                    alpha=0.3,
+                    s=20,
+                    edgecolors="none",
+                )
 
         steps = plot_df.index.to_numpy(dtype=float)
 
@@ -262,6 +296,8 @@ def plot_kl_panels(
             if rank not in plot_df.columns:
                 continue
             series = plot_df[rank].to_numpy()
+            if log_scale:
+                series = np.where(series > 0, series, np.nan)
             label = f"rank {int(rank)}" if float(rank).is_integer() else f"rank {rank}"
             ax.plot(
                 steps,
@@ -277,14 +313,9 @@ def plot_kl_panels(
         ax.set_title(str(alias))
         ax.set_ylabel("Mean KL")
         ax.grid(True, linestyle="--", alpha=0.3)
-        ax.set_xlim(left=steps.min(), right=steps.max())
+        if len(steps) > 0:
+            ax.set_xlim(left=float(steps.min()), right=float(steps.max()))
         ax.set_xlabel("Training Step")
-
-        if log_scale:
-            positive = plot_df.values[plot_df.values > 0]
-            if positive.size == 0:
-                raise ValueError("Cannot enable log scale: KL contains non-positive values")
-            ax.set_yscale("log")
 
         if len(all_ranks) <= 12:
             ax.legend(loc="upper left", ncol=2, frameon=False)
@@ -304,8 +335,9 @@ def plot_kl_panels_from_sweeps(
     exclude_betas: Sequence[float] | None = None,
     checkpoint: int = 300,
     step_interval: int | None = None,
-    max_points: int = 12,
     log_scale: bool = False,
+    show_points: bool = True,
+    downsample_every: int | None = None,
 ) -> None:
     """Helper that loads logs and plots KL panels in one step."""
     df = load_training_logs(
@@ -318,8 +350,9 @@ def plot_kl_panels_from_sweeps(
         output_path,
         betas=betas,
         exclude_betas=exclude_betas,
-        max_points=max_points,
         log_scale=log_scale,
+        show_points=show_points,
+        downsample_every=downsample_every,
     )
 
 
