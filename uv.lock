@@ -364,6 +364,17 @@ wheels = [
 ]
 
 [[package]]
+name = "data"
+version = "0.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "decorator" },
+    { name = "funcsigs" },
+    { name = "six" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ed/e9/623be82fac4250fc614741f5b1ead83d339794f94b19ac8665b6ea12ee05/data-0.4.tar.gz", hash = "sha256:2726a65da1af31e2345b6bba81ae4cee87dddf17f7c62f5c63ba7327a8480667", size = 7042 }
+
+[[package]]
 name = "dataproperty"
 version = "1.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -398,6 +409,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/35/7e/a8659e96f0646568c1fe2d4295a0bde89ccf07059c8c87ed8e6651a60cf2/datasets-4.1.0.tar.gz", hash = "sha256:42e0330780d5d4d5d664bb22a3eafe02adf073c1f4612c79582403bd8f703ae0", size = 579067 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e1/b1/80a59608b0c6030d63aad16390aeddec531a75971dc16ac9cd422defd64b/datasets-4.1.0-py3-none-any.whl", hash = "sha256:abc5e61fa605ad09b4d790579c96a4e100329f3a3b57cc6c53ab040a927d48cd", size = 503367 },
+]
+
+[[package]]
+name = "decorator"
+version = "5.2.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/43/fa/6d96a0978d19e17b68d634497769987b16c8f4cd0a7a05048bec693caa6b/decorator-5.2.1.tar.gz", hash = "sha256:65f266143752f734b0a7cc83c46f4618af75b8c5911b00ccb61d0ac9b6da0360", size = 56711 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4e/8c/f3147f5c4b73e7550fe5f9352eaa956ae838d5c51eb58e7a25b9f3e2643b/decorator-5.2.1-py3-none-any.whl", hash = "sha256:d316bb415a2d9e2d2b3abcc4084c6502fc09240e292cd76a76afc106a1c8e04a", size = 9190 },
 ]
 
 [[package]]
@@ -514,6 +534,24 @@ wheels = [
 [package.optional-dependencies]
 http = [
     { name = "aiohttp" },
+]
+
+[[package]]
+name = "funcsigs"
+version = "1.0.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/94/4a/db842e7a0545de1cdb0439bb80e6e42dfe82aaeaadd4072f2263a4fbed23/funcsigs-1.0.2.tar.gz", hash = "sha256:a7bb0f2cf3a3fd1ab2732cb49eba4252c2af4240442415b4abce3b87022a8f50", size = 27947 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/69/cb/f5be453359271714c01b9bd06126eaf2e368f1fddfff30818754b5ac2328/funcsigs-1.0.2-py2.py3-none-any.whl", hash = "sha256:330cc27ccbf7f1e992e69fef78261dc7c6569012cf397db8d3de0234e6c937ca", size = 17697 },
+]
+
+[[package]]
+name = "future"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/a7/b2/4140c69c6a66432916b26158687e821ba631a4c9273c474343badf84d3ba/future-1.0.0.tar.gz", hash = "sha256:bd2968309307861edae1458a4f8a4f3598c03be43b97521076aebf5d94c07b05", size = 1228490 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/da/71/ae30dadffc90b9006d77af76b393cb9dfbfc9629f339fc1574a1c52e6806/future-1.0.0-py3-none-any.whl", hash = "sha256:929292d34f5872e70396626ef385ec22355a1fae8ad29e1a734c3e43f9fbc216", size = 491326 },
 ]
 
 [[package]]
@@ -733,6 +771,18 @@ sdist = { url = "https://files.pythonhosted.org/packages/27/b8/ca7319556912f6883
 wheels = [
     { url = "https://files.pythonhosted.org/packages/4a/4a/cf14bf3b1f5ffb13c69cf5f0ea78031247790558ee88984a8bdd22fae60d/kaitaistruct-0.11-py2.py3-none-any.whl", hash = "sha256:5c6ce79177b4e193a577ecd359e26516d1d6d000a0bffd6e1010f2a46a62a561", size = 11372 },
 ]
+
+[[package]]
+name = "latex"
+version = "0.7.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "data" },
+    { name = "future" },
+    { name = "shutilwhich" },
+    { name = "tempdir" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e3/f3/c2562ee509faadaaf4f9d5b9491de146c6522ed2843dcecfd4f8e1a72f1d/latex-0.7.0.tar.gz", hash = "sha256:bf10c3fe27e9f3adccebc12e90ec239c86dcba101b89221f6775918211482a79", size = 6523 }
 
 [[package]]
 name = "latex2sympy2-extended"
@@ -1910,6 +1960,12 @@ wheels = [
 ]
 
 [[package]]
+name = "shutilwhich"
+version = "1.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/66/be/783f181594bb8bcfde174d6cd1e41956b986d0d8d337d535eb2555b92f8d/shutilwhich-1.1.0.tar.gz", hash = "sha256:db1f39c6461e42f630fa617bb8c79090f7711c9ca493e615e43d0610ecb64dc6", size = 2300 }
+
+[[package]]
 name = "simple-grpo"
 version = "0.1.0"
 source = { virtual = "." }
@@ -1917,6 +1973,7 @@ dependencies = [
     { name = "accelerate" },
     { name = "datasets" },
     { name = "dotenv" },
+    { name = "latex" },
     { name = "lighteval", extra = ["math"] },
     { name = "pandas" },
     { name = "peft" },
@@ -1958,6 +2015,7 @@ requires-dist = [
     { name = "accelerate", specifier = ">=1.10.1" },
     { name = "datasets", specifier = ">=2.10.1" },
     { name = "dotenv", specifier = ">=0.9.9" },
+    { name = "latex", specifier = ">=0.7.0" },
     { name = "lighteval", extras = ["math"], git = "https://github.com/huggingface/lighteval.git?rev=d3da6b9bbf38104c8b5e1acc86f83541f9a502d1" },
     { name = "pandas", specifier = ">=2.3.2" },
     { name = "peft", specifier = ">=0.3.0" },
@@ -2064,6 +2122,12 @@ sdist = { url = "https://files.pythonhosted.org/packages/80/cc/44f2d81d8f9093aad
 wheels = [
     { url = "https://files.pythonhosted.org/packages/05/a2/ed023f2edd1e011b4d99b6727bce8253842d66c3fbf9ed0a26fc09a92571/tcolorpy-0.1.7-py3-none-any.whl", hash = "sha256:26a59d52027e175a37e0aba72efc99dda43f074db71f55b316d3de37d3251378", size = 8096 },
 ]
+
+[[package]]
+name = "tempdir"
+version = "0.7.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/dd/b2/b931869a9f9ad9fa14deecbcfc28e514b0755f8b904d9fe48864951b1a60/tempdir-0.7.1.tar.gz", hash = "sha256:689680ed3ba4cc8347a70e67efc25086ce85b53b9d24a1420899c585bbf7ba8e", size = 5890 }
 
 [[package]]
 name = "tenacity"
