@@ -114,6 +114,8 @@ PALETTE = {
 
 MARKERS = {"Qwen": "o", "gemma": "^", "Llama": "s"}
 LINESTYLES = {"Qwen": "-", "gemma": "-.", "Llama": ":"}
+LINESTYLES_BETA = {0.0: "--", 0.05: "-"}
+MARKERS_BETA = {0.0: "o", 0.05: "o"}
 
 
 def _configure_style() -> None:
@@ -211,8 +213,96 @@ def plot_runtime():
     fig.savefig(output_base.with_suffix(".png"), dpi=300, bbox_inches="tight")
     fig.savefig(output_base.with_suffix(".pdf"), bbox_inches="tight")
 
+
+def load_gsm8k_summary(path: str | Path) -> pd.DataFrame:
+    df = pd.read_csv(path)
+    subset = df[df["task"].str.contains("gsm8k", case=False, na=False)].copy()
+    subset.rename(columns={"lora_r": "rank"}, inplace=True)
+    subset["model"] = subset["model_name"].apply(infer_model)
+    subset["rank"] = pd.to_numeric(subset["rank"], errors="coerce")
+    subset.dropna(subset=["rank", "baseline_pass_at_1", "kl_pass_at_1"], inplace=True)
+    subset["relative_improvement_pct"] = (
+        (subset["kl_pass_at_1"] - subset["baseline_pass_at_1"]) / subset["baseline_pass_at_1"]
+    ) * 100.0
+    return subset[["model", "rank", "relative_improvement_pct"]]
+
+
+def plot_runtime_and_gsm8k(train_df: pd.DataFrame, summary_path: str | Path) -> None:
+    runtime_df = train_df[train_df["beta"].isin([0.0, 0.05])].copy()
+    runtime_df.dropna(subset=["model", "rank", "train_runtime"], inplace=True)
+    runtime_df["rank"] = runtime_df["rank"].astype(int)
+    runtime_df["runtime_minutes"] = runtime_df["train_runtime"] / 60.0
+    runtime_df["beta_label"] = runtime_df["beta"].map({0.0: r"$\beta=0.0$", 0.05: r"$\beta=0.05$"})
+
+    gsm_df = load_gsm8k_summary(summary_path)
+
+    # compute relative runtime change (beta=0.0 vs 0.05)
+    runtime_pivot = runtime_df.pivot_table(
+        index=["model", "rank"],
+        columns="beta",
+        values="runtime_minutes",
+        aggfunc="first",
+    ).dropna(subset=[0.0, 0.05])
+    runtime_pivot["runtime_pct_delta"] = (runtime_pivot[0.0] - runtime_pivot[0.05]) / runtime_pivot[0.05] * 100.0
+    runtime_rel = runtime_pivot.reset_index()[["model", "rank", "runtime_pct_delta"]]
+
+    gsm_df = load_gsm8k_summary(summary_path)
+
+    _configure_style()
+    fig, ax = plt.subplots(figsize=(4.6, 3.0))
+    ax.set_facecolor("#f0f0f0")
+    ax.grid(True, linestyle="--", linewidth=0.6, alpha=0.5)
+
+    all_ranks = sorted(set(runtime_rel["rank"]).union(set(gsm_df["rank"].astype(int))))
+    x = range(len(all_ranks))
+    rank_index = {rank: idx for idx, rank in enumerate(all_ranks)}
+
+    # bar chart for GSM8K improvements
+    bar_width = 0.15
+    models_bar = sorted(gsm_df["model"].unique(), key=lambda m: (m not in PALETTE, m))
+    offsets = {model: (i - (len(models_bar)-1)/2) * bar_width for i, model in enumerate(models_bar)}
+    for model in models_bar:
+        subset_bar = gsm_df[gsm_df["model"] == model]
+        ax.bar(
+            [rank_index[r] + offsets[model] for r in subset_bar["rank"]],
+            subset_bar["relative_improvement_pct"],
+            width=bar_width,
+            color=PALETTE.get(model),
+            alpha=0.35,
+            label=f"{model} GSM8K" if model == models_bar[0] else None,
+        )
+
+    # line plot for runtime relative change
+    for model in sorted(runtime_rel["model"].unique(), key=lambda m: (m not in PALETTE, m)):
+        subset_line = runtime_rel[runtime_rel["model"] == model].sort_values("rank")
+        ax.plot(
+            [rank_index[r] for r in subset_line["rank"]],
+            subset_line["runtime_pct_delta"],
+            color=PALETTE.get(model),
+            linestyle=LINESTYLES.get(model, "-"),
+            marker=MARKERS.get(model, "o"),
+            markersize=5,
+            linewidth=1.4,
+            label=f"{model} runtime",
+        )
+
+    ax.axhline(0.0, color="#666666", linewidth=0.8, alpha=0.6)
+    ax.set_ylabel("Relative change (%)")
+    ax.set_xlabel("LoRA rank")
+    ax.set_xticks(list(range(len(all_ranks))))
+    ax.set_xticklabels([str(r) for r in all_ranks])
+    ax.yaxis.set_major_formatter(StrMethodFormatter("{x:.0f}%"))
+    ax.margins(x=0.05)
+    ax.legend(loc="upper left", frameon=True, fancybox=True, framealpha=0.85, fontsize=7)
+
+    fig.tight_layout()
+    out_base = Path("/home/rottman/simple-grpo/tmp/runtime_gsm8k")
+    fig.savefig(out_base.with_suffix(".png"), dpi=300, bbox_inches="tight")
+    fig.savefig(out_base.with_suffix(".pdf"), bbox_inches="tight")
+
 if __name__ == "__main__":
     df = collect_train_metrics(SWEEP_DIRS)
     with open("/home/rottman/simple-grpo/tmp/train_metrics.txt", 'w') as f:
         f.write(df.to_string())
     plot_runtime()
+    plot_runtime_and_gsm8k(df, "/home/rottman/simple-grpo/tmp/results_summary.csv")
