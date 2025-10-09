@@ -13,7 +13,8 @@ from __future__ import annotations
 
 from typing import Dict, Iterable, Mapping, Optional
 
-from collect_results import ROOT, collect_records
+from collect_evals import ROOT, collect_records
+from collect_train_metrics import collect_train_metrics, SWEEP_DIRS
 
 from collections import defaultdict
 Tensor = Dict[str, Dict[float, Dict[int, Dict[str, Dict[str, str]]]]]
@@ -37,7 +38,7 @@ def build_tensor(records: Iterable[Mapping[str, object]]) -> Tensor:
         if base_mean is not None:
             tensor.setdefault(model, {}).setdefault(0.0, {}).setdefault(rank, {})[task] = {
                 "mean": _to_str(f'{base_mean*100:.2f}'),
-                "stderr": _to_str(f'{base_stderr*100:.3f}'),
+                "stderr": _to_str(f'{base_stderr*100:.2f}'),
             }
 
         # KL run (beta typically 0.05)
@@ -48,36 +49,92 @@ def build_tensor(records: Iterable[Mapping[str, object]]) -> Tensor:
             beta = float(kl_beta)
             tensor.setdefault(model, {}).setdefault(beta, {}).setdefault(rank, {})[task] = {
                 "mean": _to_str(f'{kl_mean*100:.2f}'),
-                "stderr": _to_str(f'{kl_stderr*100:.3f}'),
+                "stderr": _to_str(f'{kl_stderr*100:.2f}'),
             }
 
     return tensor
 
-def write_latex_table(tensor):
+_MODEL_NAME_CANONICAL = (
+    ("meta-llama", "Llama"),
+    ("llama", "Llama"),
+    ("qwen", "Qwen"),
+    ("gemma", "gemma"),
+)
+
+
+def _canonicalize_model_name(model_name: str) -> str:
+    lowered = model_name.lower()
+    for marker, canonical in _MODEL_NAME_CANONICAL:
+        if marker in lowered:
+            return canonical
+    return model_name
+
+
+def preprocess_df_train_metrics(df, model_name):
+    subset = df[df["beta"].isin([0.0, 0.05])].copy()
+    subset["rank"] = subset["rank"].astype(int)
+    pivot = subset.pivot_table(
+        index=["model", "rank"],
+        columns="beta",
+        values="train_runtime",
+        aggfunc="first",
+    ).dropna(subset=[0.0, 0.05])
+
+    pivot["runtime_pct_delta"] = (pivot[0.0] - pivot[0.05]) / pivot[0.05] * 100.0
+    diffs = pivot["runtime_pct_delta"].reset_index()
+
+    target_model = _canonicalize_model_name(str(model_name))
+    series = (
+        diffs[diffs["model"] == target_model]
+        .sort_values("rank")
+        .drop_duplicates("rank", keep="first")
+    )
+
+    if series.empty:
+        return {}  # no matching runtime data for this model
+
+    return series.set_index("rank")["runtime_pct_delta"].to_dict()
+
+def write_latex_table(tensor,df):
     betas = [0.0, 0.05]
     result_table="/home/rottman/simple-grpo/tmp/result_table.txt"
-    with open(result_table, 'w') as f:
-        f.write("%begin{tabular}{l|l|l|ccc}\n%hline\n")
-        f.write("Model & beta & rank & GPQA & GSM8K & MATH-500 \\\ ")
-    for model in tensor: 
+
+    for model in tensor:
+        series_by_rank = preprocess_df_train_metrics(df, model)
+
+        with open(result_table, 'a') as f:
+            f.write("%begin{table}[t]\n%centering\n%scriptsize")
+            f.write("%begin{tabular}{clcccc}\n%hline\n")
+            f.write("$%beta$ & rank & GPQA & GSM8K & MATH-500 & Speedup \\\ \hline \hline\n\n")
         for beta in betas:
             with open(result_table, 'a') as f:
                 f.write("%hline\n")
                 f.write("\n")
-                f.write("%multirow{6}{*}{"+model+"} & %multirow{6}{*}{"+_to_str(beta)+"} \\\ ")
+                f.write("%multirow{6}{*}{"+_to_str(beta)+"} \n")
+
+            # write the performance for each task, for all ranks
             for r in tensor[model][beta]:
                 with open(result_table, 'a') as f:
-                    f.write(f"& & r={r}")
+                    f.write(f"& r={r}")
                 for task in tensor[model][beta][r]:
                     cell = tensor[model][beta][r][task]
                     mean = cell['mean']
                     stderr = "%stderr{"+cell['stderr']+"}"
                     with open(result_table, 'a') as f:
                         f.write(f"& {mean} {stderr} ")
-                with open(result_table, 'a') as f:
-                    f.write('\\\ \n')
-    with open(result_table, 'a') as f:
-        f.write("%hline \n%end{tabular}")
+                
+                
+                if beta == 0.0:
+                    runtime_delta = series_by_rank.get(r)
+                    runtime_str = "-" if runtime_delta is None else f"{runtime_delta:.2f}"
+                    with open(result_table, 'a') as f:
+                        f.write(f'& {runtime_str}\\\ \n')
+                else:
+                    with open(result_table, 'a') as f:
+                        f.write(f'& - \\\ \n')
+
+        with open(result_table, 'a') as f:
+            f.write("%hline \n%end{tabular}\n%caption{"+model+"}\n%label{tab:"+model+"}\n%end{table}\n\n\n")
 
 
 from collections import defaultdict
@@ -123,6 +180,7 @@ def task_avg(tensor):
 import matplotlib.pyplot as plt
 import numpy as np
 import os
+
 
 def plot_avg_diffs(avg_diff,
                    save_path="/home/rottman/simple-grpo/tmp/avg_diffs.png"):
@@ -181,13 +239,16 @@ def main() -> None:
     records = collect_records(ROOT)
     tensor = build_tensor(records)
 
-    write_latex_table(tensor)
+    df = collect_train_metrics(SWEEP_DIRS)
+
+    write_latex_table(tensor,df)
     diffs = task_avg(tensor)
 
     plot_avg_diffs(diffs)
-    differences_table="/home/rottman/simple-grpo/tmp/differences_table.txt"
+    differences_table="/home/rottman/simple-grpo/tmp/avg_diffs.txt"
     with open(differences_table,"w") as f:
         f.write(_to_str(diffs))
+
 
 
 if __name__ == "__main__":

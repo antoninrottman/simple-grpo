@@ -18,6 +18,7 @@ import pandas as pd
 # Configuration – tweak these constants and rerun the script.
 # ---------------------------------------------------------------------------
 OUTPUT_PATH = Path("tmp/kl_vs_rank_beta005.png")
+OUTPUT_HIGH_RES = OUTPUT_PATH.with_suffix(".pdf")
 
 SWEEPS: Mapping[str, Union[str, Path, Tuple[str, Union[str, Path]]]] = {
     "gemma": "outputs/results_run_20250926-133418",
@@ -153,18 +154,29 @@ def _prepare_pivots(df: pd.DataFrame) -> tuple[dict[str, pd.DataFrame], dict[str
     return pivots, scatters
 
 
-def plot_kl(df: pd.DataFrame, output_path: Path) -> None:
+def plot_kl(df: pd.DataFrame, output_path: Path, output_high_res: Path) -> None:
     pivots, scatters = _prepare_pivots(df)
     all_ranks = sorted({rank for pivot in pivots.values() for rank in pivot.columns})
     cmap = plt.get_cmap("viridis", len(all_ranks) if all_ranks else 1)
     rank_colors = {rank: cmap(i) for i, rank in enumerate(all_ranks)}
 
     n_panels = len(pivots)
-    fig, axes = plt.subplots(n_panels, 1, figsize=(9, 4 * n_panels), sharex=False)
+    plt.rcParams.update(
+        {
+            "font.size": 14,
+            "axes.titlesize": 16,
+            "axes.labelsize": 14,
+            "legend.fontsize": 14,
+            "xtick.labelsize": 14,
+            "ytick.labelsize": 14,
+        }
+    )
+
+    fig, axes = plt.subplots(n_panels, 1, figsize=(10, 4.2 * n_panels), sharex=False)
     if n_panels == 1:
         axes = [axes]
 
-    for ax, (alias, pivot) in zip(axes, pivots.items()):
+    for idx, (ax, (alias, pivot)) in enumerate(zip(axes, pivots.items())):
         plot_df = pivot
         scatter_df = scatters[alias]
 
@@ -219,23 +231,24 @@ def plot_kl(df: pd.DataFrame, output_path: Path) -> None:
             )
 
         ax.set_title(str(alias))
-        ax.set_ylabel("Mean KL")
+        ax.set_ylabel("KL")
         ax.grid(True, linestyle="--", alpha=0.3)
         if len(steps) > 0:
             ax.set_xlim(left=float(steps.min()), right=float(steps.max()))
-        ax.set_xlabel("Training Step")
+        ax.set_xlabel("Training Step" if idx == len(axes) - 1 else "")
         if len(all_ranks) <= 12:
-            ax.legend(loc="upper left", ncol=2, frameon=False)
+            ax.legend(loc="lower right", ncol=2, frameon=True, framealpha=0.85)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.tight_layout()
-    fig.savefig(output_path)
+    fig.savefig(output_path, dpi=300)
+    fig.savefig(output_high_res)
     plt.close(fig)
 
 
 def main() -> None:
     df = load_training_logs(SWEEPS)
-    plot_kl(df, OUTPUT_PATH)
+    plot_kl(df, OUTPUT_PATH, OUTPUT_HIGH_RES)
     print(f"Saved KL plot to {OUTPUT_PATH}")
 
 
