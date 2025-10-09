@@ -96,32 +96,6 @@ def collect_train_metrics(sweep_dirs: Iterable[str | Path]) -> pd.DataFrame:
     return pd.DataFrame.from_records(records, columns=columns)
 
 
-def save_train_runtime_summary(df: pd.DataFrame, output_path: str | Path) -> None:
-    subset = df.dropna(subset=["model", "rank", "beta", "train_runtime"]).copy()
-    subset = subset[subset["beta"].isin({0.0, 0.05})]
-    if subset.empty:
-        Path(output_path).write_text("No train_runtime entries for beta 0.0 or 0.05.\n")
-        return
-
-    subset["rank"] = subset["rank"].astype(int)
-    subset.sort_values(["model", "rank", "beta"], inplace=True)
-
-    pivot = subset.pivot_table(
-        index=["model", "rank"],
-        columns="beta",
-        values="train_runtime",
-        aggfunc="first",
-    )
-
-    pivot = pivot.reindex(columns=sorted(pivot.columns))
-    pivot = pivot / 60.0
-    pivot.columns = [f"beta={beta:.2f}" for beta in pivot.columns]
-    pivot = pivot.round(2)
-
-    content = pivot.to_string()
-    Path(output_path).write_text(content + "\n")
-
-
 SWEEP_DIRS: list[str] = [
     "logs/llama_r_sweep_results",
     "logs/results_run_20250926-083327",
@@ -225,7 +199,7 @@ def plot_runtime():
             label=model,
             color=PALETTE.get(model),
         )
-        print(series["rank"])
+        print(series["runtime_pct_delta"])
         with open("/home/rottman/simple-grpo/tmp/runtime_per_task.txt","a") as f:
             f.write(series.to_string())
 
@@ -337,6 +311,6 @@ if __name__ == "__main__":
     df = collect_train_metrics(SWEEP_DIRS)
     with open("/home/rottman/simple-grpo/tmp/train_metrics.txt", 'w') as f:
         f.write(df.to_string())
-    save_train_runtime_summary(df, "/home/rottman/simple-grpo/tmp/train_runtime_summary.txt")
     plot_runtime()
     plot_runtime_and_gsm8k(df, "/home/rottman/simple-grpo/tmp/results_summary.csv")
+

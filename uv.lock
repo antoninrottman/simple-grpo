@@ -2028,7 +2028,7 @@ requires-dist = [
     { name = "torchvision", specifier = "==0.22.1" },
     { name = "torchvision", marker = "extra == 'cpu'", specifier = "==0.22.1", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "simple-grpo", extra = "cpu" } },
     { name = "torchvision", marker = "extra == 'cu118'", specifier = "==0.22.1", index = "https://download.pytorch.org/whl/cu118", conflict = { package = "simple-grpo", extra = "cu118" } },
-    { name = "transformers", specifier = ">=4.28.1" },
+    { name = "transformers", specifier = ">=4.56.1" },
     { name = "trl", specifier = ">=0.3.0" },
     { name = "wandb" },
     { name = "weave", specifier = ">=0.52.8" },
@@ -2502,16 +2502,16 @@ wheels = [
 
 [[package]]
 name = "trl"
-version = "0.23.0"
+version = "0.23.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "accelerate" },
     { name = "datasets" },
     { name = "transformers" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/45/18/c18e27f6156cf961791ca7abcd4ee5fc8c5ae0fbb936c59827852ee118f5/trl-0.23.0.tar.gz", hash = "sha256:abfe0ecfa6b7e46022552b9dd0cc288bf2c4ef19364ce7765d10218b62b618f1", size = 515765 }
+sdist = { url = "https://files.pythonhosted.org/packages/4d/80/9f71d0c6c858de080be94d596bcfa4b703ad7bc6f2539311fa74eb2a7ff5/trl-0.23.1.tar.gz", hash = "sha256:9a3025a9e7ea18fa4f3a5e575aa16b914d4ea86334b34689216af54562a460c5", size = 516824 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0f/81/035cace9b8853df794db0499299273abef30de889602587efa2a95c7dccb/trl-0.23.0-py3-none-any.whl", hash = "sha256:bb8f35a6a1531bad2d52032add29380413bd9b032d133ab6df16d2191f14f9e6", size = 564734 },
+    { url = "https://files.pythonhosted.org/packages/e9/c7/c887226d7a1b3517c6db07f778fe61cb1254d7e2abfad6bb175bf48a8ba1/trl-0.23.1-py3-none-any.whl", hash = "sha256:ef43e2f00e6e30f3a8a9cc570e142278bfbd5aedc000ebe4eb0509d2f48415b2", size = 564602 },
 ]
 
 [[package]]
